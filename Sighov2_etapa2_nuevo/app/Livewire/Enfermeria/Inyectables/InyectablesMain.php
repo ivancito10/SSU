@@ -37,7 +37,9 @@ class InyectablesMain extends Component
         $registro = RegistroInyeccion::with([
             'receta',
             'medicamentos.medicamento',
-            'procedimiento'
+            'procedimiento',
+            'usuarioCreador',
+            'usuarioEditor',
         ])->find($idRegistro);
 
         if (!$registro) {
@@ -74,6 +76,7 @@ class InyectablesMain extends Component
         // Estructurar información para el modal
         $this->detalleAtencion = [
             'id'             => $registro->id,
+            'estado'         => (bool) $registro->estado,
             'fecha_registro' => optional($registro->created_at)->format('d/m/Y H:i:s') ?? 'Sin fecha',
             'paciente'       => $paciente,
             'nro_receta'     => optional($registro->receta)->nro_receta ?? ($registro->id_receta ?? 'S/N (Manual)'),
@@ -92,10 +95,15 @@ class InyectablesMain extends Component
                 'sangria'              => (bool) $registro->procedimiento->sangria,
                 'observaciones'        => $registro->procedimiento->observaciones ?: 'Ninguna',
             ] : null,
+            'user_crea'      => $registro->usuarioCreador?->name ?: 'SIN DATO',
+            'fecha_creado'   => $registro->created_at?->toDateTimeString(),
+            'user_edit'      => $registro->usuarioEditor?->name ?: 'SIN DATO',
+            'fecha_editado'  => $registro->updated_at?->toDateTimeString(),
         ];
 
-        // Abrir la ventana emergente
+        // Abrir la ventana emergente estilo institucional (<x-ver-modal>)
         $this->modalVerAbierto = true;
+        $this->dispatch('verInyeccionModal');
     }
 
     public function cerrarModalVer()

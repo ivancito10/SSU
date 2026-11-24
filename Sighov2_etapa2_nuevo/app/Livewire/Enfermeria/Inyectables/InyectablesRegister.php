@@ -215,15 +215,17 @@ class InyectablesRegister extends Component
     // --- MODO SISTEMA: BUSCAR RECETA UTILIZANDO TUS MODELOS ELOQUENT ---
     public function buscarRecetaSistema()
     {
+        // Normalizar por seguridad en servidor (solo dígitos y sin ceros a la izquierda)
+        $this->nroRecetaBusqueda = substr(ltrim(preg_replace('/[^0-9]/', '', trim($this->nroRecetaBusqueda)), '0'), 0, 10);
+
         $this->validate([
-            'nroRecetaBusqueda' => 'required|numeric|min:1', 
+            'nroRecetaBusqueda' => ['required', 'regex:/^[1-9][0-9]*$/'],
         ], [
             'nroRecetaBusqueda.required' => 'Ingrese el número de receta institucional.',
-            'nroRecetaBusqueda.numeric'  => 'El número de receta debe contener únicamente números.', 
-            'nroRecetaBusqueda.min'      => 'El número de receta debe ser mayor a 0.',
+            'nroRecetaBusqueda.regex'    => 'El número de receta debe contener únicamente números y no puede comenzar con 0.',
         ]);
 
-        $termino = trim($this->nroRecetaBusqueda);
+        $termino = $this->nroRecetaBusqueda;
 
         // 1. LIMPIAR DATOS ANTERIORES POR SEGURIDAD ANTES DE BUSCAR
         $this->nombreCompletoPaciente    = '';
@@ -235,8 +237,11 @@ class InyectablesRegister extends Component
         $this->medicamentosRecetaSistema = [];
 
         try {
-            // 2. Buscar estrictamente por el número físico de la receta institucional
-            $receta = \App\Models\ConsultaExterna\Receta::where('nro_receta', (string) $termino)->first();
+            // 2. Buscar comparando solo los dígitos después de los ceros a la izquierda (ej: BD '01589' == '1589')
+            $receta = \App\Models\ConsultaExterna\Receta::whereRaw(
+                "LTRIM(TRIM(nro_receta::text), '0') = ?",
+                [(string) $termino]
+            )->first();
 
             if (!$receta) {
                 $this->dispatch('alertaError', mensaje: 'No se encontró ninguna receta con el número ingresado.');
@@ -364,6 +369,10 @@ class InyectablesRegister extends Component
     // Este método se activa al borrar o cambiar "nroRecetaBusqueda"
     public function updatedNroRecetaBusqueda(): void
     {
+        // Mantener solo dígitos y eliminar ceros al inicio
+        $soloNumeros = preg_replace('/[^0-9]/', '', (string) $this->nroRecetaBusqueda);
+        $this->nroRecetaBusqueda = substr(ltrim($soloNumeros, '0'), 0, 10);
+
         // Si el campo está vacío, limpiamos la información
         if (trim($this->nroRecetaBusqueda) === '') {
             $this->nombreCompletoPaciente = '';

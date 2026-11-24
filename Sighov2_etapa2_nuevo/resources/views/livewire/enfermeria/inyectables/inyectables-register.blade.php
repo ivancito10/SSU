@@ -53,8 +53,9 @@
                                        id="nroRecetaBusqueda" 
                                        wire:model.live.debounce.300ms="nroRecetaBusqueda" 
                                        wire:keydown.enter="buscarRecetaSistema"
-                                       type="numeric"
-                                       oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0,10);"
+                                       type="text"
+                                       inputmode="numeric"
+                                       oninput="this.value = this.value.replace(/[^0-9]/g, '').replace(/^0+/, '').slice(0,10);"
                                        placeholder="Ingrese número de receta...">
                                 <div class="input-group-append">
                                     <button type="button" class="btn btn-primary" wire:click="buscarRecetaSistema" wire:loading.attr="disabled">

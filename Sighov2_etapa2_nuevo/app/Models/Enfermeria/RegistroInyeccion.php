@@ -5,6 +5,7 @@ namespace App\Models\Enfermeria;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\ConsultaExterna\Receta;
 use App\Models\Enfermeria\ViaParenteral;
+use App\Models\User;
 
 class RegistroInyeccion extends Model
 {
@@ -50,5 +51,15 @@ class RegistroInyeccion extends Model
     public function procedimiento()
     {
         return $this->hasOne(RegistroInyeccionProcedimiento::class, 'id_registro_inyeccion');
+    }
+
+    public function usuarioCreador()
+    {
+        return $this->belongsTo(User::class, 'id_user_created', 'id');
+    }
+
+    public function usuarioEditor()
+    {
+        return $this->belongsTo(User::class, 'id_user_updated', 'id');
     }
 }
