@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "574829296646",
+    "project_id": "soporte-ssu-app",
+    "storage_bucket": "soporte-ssu-app.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:574829296646:android:042f9ba5b7e229b497d787",
+        "android_client_info": {
+          "package_name": "com.ssu.appsoporte"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDvs2TbziH4WvVqtmkABd-NS1dZtypVnrA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

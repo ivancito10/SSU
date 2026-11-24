@@ -1,0 +1,83 @@
+{
+  "expo": {
+    "name": "Soporte SSU La Paz",
+    "slug": "sigho-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/ssu-icon-square.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/ssu-icon-square.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.ssulapaz.sighoapp"
+    },
+    "android": {
+      "googleServicesFile": "./google-services.json",
+      "package": "com.ssu.appsoporte",
+      "softwareKeyboardLayoutMode": "resize",
+      "adaptiveIcon": {
+        "backgroundColor": "#FFFFFF",
+        "foregroundImage": "./assets/ssu-icon-square.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/ssu-icon-square.png",
+      "name": "Soporte SSU La Paz",
+      "shortName": "Soporte SSU",
+      "description": "Sistema de Gestión de Soporte Técnico - SSU La Paz",
+      "themeColor": "#164a96",
+      "backgroundColor": "#ffffff",
+      "display": "standalone",
+      "startUrl": "/",
+      "lang": "es"
+    },
+    "plugins": [
+      "expo-notifications",
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Permite usar Face ID o Touch ID para iniciar sesión de forma segura."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permite acceder a tus imágenes para adjuntar el acta de soporte.",
+          "cameraPermission": "Permite usar la cámara para tomar una foto del acta de soporte."
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Permite registrar tu ubicación al marcar el inicio del trayecto y la llegada al soporte."
+        }
+      ],
+      "./withCleartextTraffic.js"
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "1b6509de-d497-4f7d-9abd-75a8521fe79e"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/1b6509de-d497-4f7d-9abd-75a8521fe79e"
+    }
+  }
+}

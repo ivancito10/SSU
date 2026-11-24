@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/nest-cli",
+  "collection": "@nestjs/schematics",
+  "sourceRoot": "src",
+  "compilerOptions": {
+    "deleteOutDir": true,
+    "assets": [
+      { "include": "config/assets/swagger-account-pages.css", "watchAssets": true },
+      { "include": "config/assets/swagger-account-pages.js", "watchAssets": true }
+    ]
+  }
+}

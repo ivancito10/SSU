@@ -1,0 +1,38 @@
+body{margin:0;background:#f3f6fa;color:#24384c;font:16px system-ui}a{color:inherit}
+main{max-width:960px;margin:36px auto;padding:0 20px}
+section{background:white;padding:28px;border-radius:12px;margin-bottom:20px;box-shadow:0 3px 16px #244c3f12}
+label{display:block;margin:18px 0 6px}
+input,select,button{font:inherit;padding:10px;border-radius:6px;border:1px solid #becbd7}
+input{box-sizing:border-box;width:100%}
+button{background:#85EB2C;color:white;cursor:pointer;margin-top:16px}
+button:disabled{opacity:.5;cursor:default}
+table{border-collapse:collapse;width:100%;margin-top:20px}
+td,th{text-align:left;padding:12px;border-bottom:1px solid #ddd}
+td button{margin:0}#aviso{white-space:pre-wrap;background:#e6eff7;padding:16px;border-radius:8px}
+small{color:#54687b}
+code{overflow-wrap:anywhere}
+nav{display:flex;gap:20px}
+.sighov-header { box-sizing:border-box; width:100%; background:#1b1b1b; color:#fff; font-family:Arial,sans-serif; }
+.sighov-header-inner { box-sizing:border-box; max-width:1460px; min-height:60px; margin:auto; padding:10px 20px; display:flex; align-items:center; gap:20px; flex-wrap:wrap; }
+.sighov-header .sighov-brand { display:flex; align-items:center; gap:8px; margin-right:auto; color:#fff; text-decoration:none; }
+.sighov-brand-icon { display:grid; place-items:center; width:62.5px; height:62.5px; border-radius:100%; background:#85ea2d; color:#173300; font:bold 20px monospace; }
+.sighov-brand-span {padding: 0px !important;}
+.sighov-brand-name { display:block; font-size:22px; font-weight:400; line-height:24px; }
+.sighov-brand-caption { display:block; font-size:10px; color:#ddd; letter-spacing:.5px; }
+.sighov-header nav { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.sighov-header nav a { color:#fff; text-decoration:none; font-size:13px !important; font-weight:700; }
+.sighov-header nav a:hover { text-decoration:underline; }
+.sighov-header nav a[hidden] { display:none!important; }
+.sighov-header nav .sighov-logout { background:#85eb2c; border-radius:4px; border:0.5px solid #85EB2C; padding:9px 18px; transition-property: all; transition-duration: 0.5s; }
+.sighov-header nav .sighov-logout:hover { background:#ffffff; text-decoration:none; color: #85eb2c;}
+@media(max-width:480px) { .sighov-header-inner { gap:12px; } .sighov-header nav { gap:12px; } }
+#asignar-acceso{scroll-margin-top:24px}
+#resultado-alta{white-space:pre-wrap;overflow-wrap:anywhere;background:#e6eff7;padding:16px;border-radius:8px;margin-top:16px}
+.btn-verde{border-radius:4px;border:0.5px solid #85EB2C;background:#85EB2C;color:white;transition-property: all;transition-duration: 0.5s; display: flex; flex-direction: row; align-items: center}
+.btn-verde:hover{background:#ffffff;color:#85EB2C;}
+#resultadosUsuariosAPIs td { vertical-align: middle; }
+.acciones-usuario { display: flex; align-items: center; gap: 5px; }
+#confirmar-accion { width:min(26rem,80vw); background:#ffffff; color:#24384c; border:2px solid #85EB2C; border-radius:12px; padding:24px; }
+#confirmar-accion::backdrop { background:rgba(0,0,0,.45); }
+#confirmar-accion h2 { margin-top:0; }
+#confirmar-accion form { display:flex; justify-content:flex-end; gap:8px; }
