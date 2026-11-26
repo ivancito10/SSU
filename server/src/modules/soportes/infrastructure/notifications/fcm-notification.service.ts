@@ -101,23 +101,53 @@ export class FcmNotificationService implements NotificationServicePort {
             defaultVibrateTimings: true,
           },
         },
+        apns: {
+          headers: {
+            'apns-priority': '10',
+          },
+          payload: {
+            aps: {
+              sound: 'default',
+              badge: 1,
+            },
+          },
+        },
         data: dataPayload || {},
         tokens: deviceTokens,
       };
 
-      const response = await getMessaging().sendEachForMulticast(payload);
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(new Error('Tiempo de espera agotado (4s) al conectar con Firebase FCM.'));
+          }, 4000);
+        });
 
-      this.logger.log(
-        `Notificación Push enviada (${response.successCount} exitosas, ${response.failureCount} fallidas): "${mensaje}"`,
-      );
+        const response = await Promise.race([
+          getMessaging().sendEachForMulticast(payload),
+          timeoutPromise,
+        ]);
 
-      if (response.failureCount > 0) {
-        this.logger.warn(`Fallaron ${response.failureCount} notificaciones hacia ${JSON.stringify(destino)}.`);
+        this.logger.log(
+          `Notificación Push enviada (${response.successCount} exitosas, ${response.failureCount} fallidas): "${mensaje}"`,
+        );
+
+        if (response.failureCount > 0) {
+          this.logger.warn(`Fallaron ${response.failureCount} notificaciones hacia ${JSON.stringify(destino)}.`);
+        }
+
+        return response.successCount > 0;
+      } catch (fcmError: any) {
+        this.logger.warn(
+          `Notificación Push FCM omitida (sin salida a internet o timeout) para ${JSON.stringify(destino)}: ${fcmError?.message || fcmError}`,
+        );
+        return false;
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
       }
-
-      return response.successCount > 0;
     } catch (error: any) {
-      this.logger.error(`Error enviando notificación Push: ${error.message}`);
+      this.logger.warn(`Error general enviando notificación Push: ${error?.message || error}`);
       return false;
     }
   }

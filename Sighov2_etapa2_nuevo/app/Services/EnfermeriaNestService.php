@@ -127,16 +127,16 @@ class EnfermeriaNestService
     /**
      * Obtiene especialistas activos con opción de búsqueda por nombre o especialidad
      */
-    public function obtenerEspecialistas(string $termino = '', int $limite = 20): array
+    public function obtenerEspecialistas(string $termino = '', int $limite = 100): array
     {
-        $token = session('nest_access_token');
-        if (!$token) {
-            $token = $this->obtenerTokenNest();
+        $token = $this->getToken();
+        if ($token === '') {
+            return [];
         }
 
         try {
             $query = [
-                'limite' => $limite,
+                'limite' => min(max($limite, 1), 100),
                 'pagina' => 1,
             ];
 
@@ -144,19 +144,55 @@ class EnfermeriaNestService
                 $query['buscar'] = trim($termino);
             }
 
-            $response = \Illuminate\Support\Facades\Http::withToken($token)
+            $response = Http::withToken($token)
                 ->withoutVerifying()
+                ->acceptJson()
                 ->timeout(10)
                 ->get("{$this->baseUrl}/especialistas", $query);
+
+            if ($response->status() === 401) {
+                session()->forget('nest_access_token');
+                return [];
+            }
 
             if ($response->successful()) {
                 $body = $response->json();
                 return $body['datos'] ?? $body['data'] ?? $body ?? [];
             }
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning("Error al consultar especialistas en Nest: " . $e->getMessage());
+            Log::warning("Error al consultar especialistas en Nest: " . $e->getMessage());
         }
 
         return [];
+    }
+
+    public function obtenerEspecialistaPorId(int $idEspecialista): ?array
+    {
+        $token = $this->getToken();
+        if ($token === '') {
+            return null;
+        }
+
+        try {
+            $response = Http::withToken($token)
+                ->withoutVerifying()
+                ->acceptJson()
+                ->timeout(5)
+                ->get("{$this->baseUrl}/especialistas/{$idEspecialista}");
+
+            if ($response->status() === 401) {
+                session()->forget('nest_access_token');
+                return null;
+            }
+
+            if ($response->successful()) {
+                $body = $response->json();
+                return isset($body['data']) && is_array($body['data']) ? $body['data'] : $body;
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Error al consultar especialista #{$idEspecialista} en Nest: " . $e->getMessage());
+        }
+
+        return null;
     }
 }

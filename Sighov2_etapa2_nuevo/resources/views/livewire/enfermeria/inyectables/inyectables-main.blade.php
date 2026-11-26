@@ -6,9 +6,14 @@
         </h4>
         
         @can('menu.enfermeria')
-            <x-agregar-button onclick="window.location.href='{{ route('enfermeria.inyectables.create') }}'" title="REGISTRAR INYECCIÓN">
-                REGISTRAR
-            </x-agregar-button>
+            <div class="d-flex">
+                <x-reportes-button class="mr-2" wire:click="abrirModalReporte" title="REPORTE EXCEL">
+                    REPORTE EXCEL
+                </x-reportes-button>
+                <x-agregar-button wire:click="redirectToCreate" title="REGISTRAR INYECCIÓN">
+                    REGISTRAR
+                </x-agregar-button>
+            </div>
         @endcan
     </div>
 
@@ -21,6 +26,13 @@
     <!-- VENTANA EMERGENTE (MODAL VER)              -->
     <!-- ========================================== -->
     @include('livewire.enfermeria.inyectables.modalVerInyeccion')
+
+    <!-- ========================================== -->
+    <!-- VENTANA EMERGENTE (MODAL REPORTE EXCEL)    -->
+    <!-- ========================================== -->
+    @can('menu.enfermeria')
+        @include('livewire.enfermeria.inyectables.modalReporteExcel')
+    @endcan
 
     <!-- Scripts de SweetAlert2 -->
     <script>

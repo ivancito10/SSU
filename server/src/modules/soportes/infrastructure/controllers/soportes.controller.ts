@@ -409,8 +409,8 @@ export class SoportesController {
       body.instruccionesTecnico
     );
 
-    try {
-      await this.notificationService.enviarNotificacion(
+    void this.notificationService
+      .enviarNotificacion(
         Number(body.idTecnico),
         'Soporte reasignado',
         `Te asignaron el ticket ${resultado?.codigoTicket || `#${idSolicitud}`}. Cambia al modo TÉCNICO para atenderlo.`,
@@ -421,10 +421,10 @@ export class SoportesController {
           rolDestino: 'TECNICO',
           tipoNotificacion: 'ASIGNACION_TECNICO',
         },
-      );
-    } catch (error) {
-      console.error('Reasignación completada, pero no se pudo enviar el aviso al técnico:', error);
-    }
+      )
+      .catch((error: any) => {
+        console.warn('Reasignación completada, pero falló la notificación en segundo plano:', error);
+      });
 
     return {
       status: 200,

@@ -17,7 +17,7 @@ import {
     useWindowDimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { obtenerItem, eliminarItem } from '../../../core/utils/storage';
+import { obtenerItem, guardarItem, eliminarItem } from '../../../core/utils/storage';
 import { dispararAlertaInsistenciaDispositivo } from '../../../core/utils/notifications';
 import { theme } from '../../../core/theme/theme';
 import { crearSoporteManual, generarEnlaceReporteExcel, obtenerBandeja, obtenerSedes, obtenerConsultoriosPorSede } from '../api/soporte.service';
@@ -28,7 +28,18 @@ import { AppIcon } from '../../../core/components/AppIcon';
 import { AppAlert } from '../../../core/components/AlertaGlobalModal';
 import { NotificacionesCampana } from '../../../core/components/NotificacionesCampana';
 
-export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponibles = [], onCambiarRol, solicitudDesdeNotificacion, onNotificacionAbierta, onNotificacionSeleccionada }: any) => {
+// Control global a nivel de módulo para evitar que múltiples instancias o refrescos
+// paralelos de BandejaScreen abran más de un modal de soporte concluido.
+const concluidosAvisadosGlobal = new Set<number>();
+let concluidosStorageCargadoGlobal: string | null = null;
+let modalConcluidoAbiertoGlobal: number | null = null;
+const listenersCerrarModalConcluido = new Set<() => void>();
+const cerrarTodosModalesConcluidoGlobal = () => {
+    modalConcluidoAbiertoGlobal = null;
+    listenersCerrarModalConcluido.forEach((fn) => fn());
+};
+
+export const BandejaScreen = ({ navigation, route, onLogout, rolActivo, rolesDisponibles = [], onCambiarRol, solicitudDesdeNotificacion, onNotificacionAbierta, onNotificacionSeleccionada }: any) => {
     const { width } = useWindowDimensions();
     const insets = useSafeAreaInsets();
     const esEscritorio = Platform.OS === 'web' && width > 768;
@@ -42,7 +53,8 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
     const [tabActivo, setTabActivo] = useState<'PENDIENTES' | 'CONCLUIDAS'>('PENDIENTES');
     const [filtroKpi, setFiltroKpi] = useState<'PENDIENTES' | 'ASIGNADAS' | 'EN_PROCESO' | 'DERIVADAS' | 'FINALIZADAS' | 'ACTIVOS' | 'TODOS' | null>(null);
     const [filtroFechaHistorial, setFiltroFechaHistorial] = useState<'TODAS' | 'HOY' | 'AYER' | 'SEMANA' | 'MES' | 'ESPECIFICA'>('TODAS');
-    const [fechaEspecificaHistorial, setFechaEspecificaHistorial] = useState<string | null>(null);
+    const [fechaInicioRango, setFechaInicioRango] = useState<string | null>(null);
+    const [fechaFinRango, setFechaFinRango] = useState<string | null>(null);
     const [modalCalendarioVisible, setModalCalendarioVisible] = useState(false);
     const [exportandoExcel, setExportandoExcel] = useState(false);
     const [mesCalendario, setMesCalendario] = useState(() => {
@@ -77,10 +89,41 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
         ticket: TicketSoporte;
         mensaje: string;
     } | null>(null);
+    const [ticketConcluidoModal, setTicketConcluidoModal] = useState<TicketSoporte | null>(null);
+    const [pantallaEnfocada, setPantallaEnfocada] = useState(true);
+    const pantallaEnfocadaRef = useRef<boolean>(true);
     const mapaInsistenciasRef = useRef<Record<number, number>>({});
     const primeraCargaRef = useRef<boolean>(true);
+    const usuarioIdStorageRef = useRef<string>('default');
+    const ticketsUsuarioActualesRef = useRef<TicketSoporte[]>([]);
     const solicitudNotificacionProcesadaRef = useRef<number | null>(null);
+
+    useEffect(() => {
+        const cerrarLocal = () => setTicketConcluidoModal(null);
+        listenersCerrarModalConcluido.add(cerrarLocal);
+        return () => {
+            listenersCerrarModalConcluido.delete(cerrarLocal);
+        };
+    }, []);
     const manualScrollRef = useRef<React.ElementRef<typeof ScrollView>>(null);
+
+    useEffect(() => {
+        const filtroInicial = route?.params?.filtroInicial;
+        const filtroTs = route?.params?.filtroTs ?? route?.params?.solicitudCreadaTs;
+        if (filtroInicial && filtroTs) {
+            setTabActivo(
+                filtroInicial === 'FINALIZADAS' || filtroInicial === 'DERIVADAS'
+                    ? 'CONCLUIDAS'
+                    : 'PENDIENTES',
+            );
+            setFiltroKpi(filtroInicial);
+            navigation.setParams?.({
+                filtroInicial: undefined,
+                filtroTs: undefined,
+                solicitudCreadaTs: undefined,
+            });
+        }
+    }, [route?.params?.filtroInicial, route?.params?.filtroTs, route?.params?.solicitudCreadaTs, navigation]);
 
     useEffect(() => {
         if (!alertaEmergente) return;
@@ -89,6 +132,47 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
         }, 5000);
         return () => clearTimeout(timer);
     }, [alertaEmergente]);
+
+    const marcarConcluidosVistos = useCallback(async (ticketActual: TicketSoporte | null) => {
+        if (ticketActual) {
+            const idT = Number(ticketActual.id_solicitud || ticketActual.id);
+            if (Number.isFinite(idT) && idT > 0) {
+                concluidosAvisadosGlobal.add(idT);
+            }
+        }
+        ticketsUsuarioActualesRef.current.forEach((t) => {
+            const idT = Number(t.id_solicitud || t.id);
+            const estadoNorm = String(t.estado || '').trim().toUpperCase();
+            if (estadoNorm === 'FINALIZADA' && Number.isFinite(idT) && idT > 0) {
+                concluidosAvisadosGlobal.add(idT);
+            }
+        });
+        try {
+            const storageKey = `soporte_concluidos_avisados_${usuarioIdStorageRef.current}`;
+            const ids = Array.from(concluidosAvisadosGlobal).slice(-100);
+            await guardarItem(storageKey, JSON.stringify(ids));
+        } catch {
+            // ignorar error de almacenamiento local
+        }
+    }, []);
+
+    const cerrarModalConcluido = () => {
+        const ticketObjetivo = ticketConcluidoModal;
+        cerrarTodosModalesConcluidoGlobal();
+        void marcarConcluidosVistos(ticketObjetivo);
+    };
+
+    const irACalificarTicketConcluido = () => {
+        const ticketObjetivo = ticketConcluidoModal;
+        cerrarTodosModalesConcluidoGlobal();
+        void marcarConcluidosVistos(ticketObjetivo);
+        if (ticketObjetivo) {
+            navigation.navigate('TicketDetalle', {
+                ticket: ticketObjetivo,
+                rolUsuario: RolBandeja.USUARIO,
+            });
+        }
+    };
 
     const manejarCerrarSesion = async () => {
         await eliminarItem('jwtToken');
@@ -144,6 +228,49 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                     primeraCargaRef.current = false;
                 }
 
+                if (rol === RolBandeja.USUARIO) {
+                    ticketsUsuarioActualesRef.current = arregloTickets;
+                    const userIdKey = String(userData.id || userData.id_usuario || userData.username || 'default');
+                    usuarioIdStorageRef.current = userIdKey;
+                    const storageKey = `soporte_concluidos_avisados_${userIdKey}`;
+                    if (concluidosStorageCargadoGlobal !== storageKey) {
+                        concluidosStorageCargadoGlobal = storageKey;
+                        try {
+                            const guardado = await obtenerItem(storageKey);
+                            const ids = guardado ? JSON.parse(guardado) : [];
+                            if (Array.isArray(ids)) {
+                                ids.map(Number).filter((n) => Number.isFinite(n) && n > 0).forEach((n) => concluidosAvisadosGlobal.add(n));
+                            }
+                        } catch {
+                            // ignorar error de lectura
+                        }
+                    }
+
+                    if (pantallaEnfocadaRef.current && modalConcluidoAbiertoGlobal === null) {
+                        const recienConcluido = arregloTickets.find((t) => {
+                            const idT = Number(t.id_solicitud || t.id);
+                            const estadoNormalizado = String(t.estado || '').trim().toUpperCase();
+                            return (
+                                estadoNormalizado === 'FINALIZADA' &&
+                                !t.calificacion_usuario &&
+                                Number.isFinite(idT) &&
+                                idT > 0 &&
+                                !concluidosAvisadosGlobal.has(idT)
+                            );
+                        });
+                        if (recienConcluido) {
+                            const idNuevo = Number(recienConcluido.id_solicitud || recienConcluido.id);
+                            // Bloqueo síncrono inmediato para que ninguna otra instancia ni refresco lo duplique
+                            concluidosAvisadosGlobal.add(idNuevo);
+                            modalConcluidoAbiertoGlobal = idNuevo;
+                            setTicketConcluidoModal(recienConcluido);
+                        }
+                    }
+                } else {
+                    ticketsUsuarioActualesRef.current = [];
+                    cerrarTodosModalesConcluidoGlobal();
+                }
+
                 setTickets(arregloTickets);
             }
         } catch (error) {
@@ -167,6 +294,8 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
         }, 4000);
 
         const unsubscribeFocus = navigation.addListener('focus', () => {
+            pantallaEnfocadaRef.current = true;
+            setPantallaEnfocada(true);
             cargarDatos(true);
             if (!intervalo) {
                 intervalo = setInterval(() => {
@@ -176,6 +305,9 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
         });
 
         const unsubscribeBlur = navigation.addListener('blur', () => {
+            pantallaEnfocadaRef.current = false;
+            setPantallaEnfocada(false);
+            cerrarTodosModalesConcluidoGlobal();
             if (intervalo) {
                 clearInterval(intervalo);
                 intervalo = null;
@@ -273,7 +405,7 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
             setConsultoriosManual([]);
             setFormSoporteManual({ solicitante_nombre: '', sede: '', oficina: '', piso: '', consultorio: '', descripcion: '', prioridad: 'MEDIA' });
             setTabActivo('PENDIENTES');
-            setFiltroKpi(null);
+            setFiltroKpi('EN_PROCESO');
             await cargarDatos(true);
             AppAlert.alert('Soporte registrado', 'El soporte quedó registrado y está en proceso.');
         } catch (error: any) {
@@ -298,6 +430,7 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
         if (filtroKpi === 'ACTIVOS') return ticket.estado !== 'FINALIZADA';
         if (filtroKpi === 'TODOS') return true;
         if (tabActivo === 'PENDIENTES') {
+            if (rolUsuario === RolBandeja.USUARIO) return true;
             return ticket.estado !== 'FINALIZADA';
         } else {
             return ticket.estado === 'FINALIZADA';
@@ -364,10 +497,14 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
             fechaInicio = fmtIso(inicioMes);
             fechaFin = fmtIso(hoy);
             etiquetaFiltro = `Este mes (${formatearClaveFechaCorta(fechaInicio)} - ${formatearClaveFechaCorta(fechaFin)})`;
-        } else if (filtroFechaHistorial === 'ESPECIFICA' && fechaEspecificaHistorial) {
-            fechaInicio = fechaEspecificaHistorial;
-            fechaFin = fechaEspecificaHistorial;
-            etiquetaFiltro = `Fecha ${formatearClaveFechaCorta(fechaEspecificaHistorial)}`;
+        } else if (filtroFechaHistorial === 'ESPECIFICA' && fechaInicioRango) {
+            const inicio = fechaInicioRango;
+            const fin = fechaFinRango || fechaInicioRango;
+            fechaInicio = inicio;
+            fechaFin = fin;
+            etiquetaFiltro = inicio === fin
+                ? `Fecha ${formatearClaveFechaCorta(inicio)}`
+                : `Rango (${formatearClaveFechaCorta(inicio)} - ${formatearClaveFechaCorta(fin)})`;
         }
 
         setExportandoExcel(true);
@@ -439,8 +576,10 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                 if (filtroFechaHistorial === 'AYER') return claveLocal(soloDia) === claveAyer;
                 if (filtroFechaHistorial === 'SEMANA') return soloDia >= inicioSemana;
                 if (filtroFechaHistorial === 'MES') return soloDia >= inicioMes;
-                if (filtroFechaHistorial === 'ESPECIFICA' && fechaEspecificaHistorial) {
-                    return claveLocal(soloDia) === fechaEspecificaHistorial;
+                if (filtroFechaHistorial === 'ESPECIFICA' && fechaInicioRango) {
+                    const claveDia = claveLocal(soloDia);
+                    const finClave = fechaFinRango || fechaInicioRango;
+                    return claveDia >= fechaInicioRango && claveDia <= finClave;
                 }
                 return true;
             })
@@ -496,7 +635,7 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
         });
 
         return resultado;
-    }, [esVistaHistorial, ticketsFiltrados, filtroFechaHistorial, fechaEspecificaHistorial]);
+    }, [esVistaHistorial, ticketsFiltrados, filtroFechaHistorial, fechaInicioRango, fechaFinRango]);
 
     const ticketsConInsistencia = tickets.filter(
         (t) => t.estado !== 'FINALIZADA' && Number(t.cantidad_resolicitudes || 0) > 0
@@ -505,9 +644,10 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
     const kpis =
         rolUsuario === RolBandeja.USUARIO
             ? [
-                { valor: totalActivos, etiqueta: 'En proceso', filtro: 'ACTIVOS' as const, tab: 'PENDIENTES' as const },
+                { valor: totalEnProceso, etiqueta: 'En proceso', filtro: 'EN_PROCESO' as const, tab: 'PENDIENTES' as const },
+                { valor: totalAsignadas, etiqueta: 'Asignadas', filtro: 'ASIGNADAS' as const, tab: 'PENDIENTES' as const },
+                { valor: totalPendientes, etiqueta: 'Pendientes', filtro: 'PENDIENTES' as const, tab: 'PENDIENTES' as const },
                 { valor: totalFinalizados, etiqueta: 'Concluidas', filtro: 'FINALIZADAS' as const, tab: 'CONCLUIDAS' as const },
-                { valor: tickets.length, etiqueta: 'Total solicitudes', filtro: 'TODOS' as const, tab: 'PENDIENTES' as const },
             ]
             : rolUsuario === RolBandeja.OPERADOR
                 ? [
@@ -683,10 +823,14 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                             ? 'Soportes asignados a técnicos'
                             : filtroKpi === 'EN_PROCESO'
                                 ? 'Soportes en proceso'
-                                : tabActivo === 'PENDIENTES'
+                                : filtroKpi === 'TODOS'
+                                    ? 'Todas las solicitudes'
+                                    : tabActivo === 'PENDIENTES'
                         ? rolUsuario === RolBandeja.OPERADOR
                             ? 'Nuevos y pendientes de atención'
-                            : 'Soportes en proceso'
+                            : rolUsuario === RolBandeja.USUARIO
+                                ? 'Todas las solicitudes'
+                                : 'Soportes en proceso'
                         : rolUsuario === RolBandeja.OPERADOR
                             ? 'Últimos soportes finalizados y actas'
                             : 'Historial de soportes concluidos'}
@@ -734,7 +878,8 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                                 ]}
                                 onPress={() => {
                                     setFiltroFechaHistorial(opcion.id);
-                                    setFechaEspecificaHistorial(null);
+                                    setFechaInicioRango(null);
+                                    setFechaFinRango(null);
                                 }}
                                 activeOpacity={0.78}
                             >
@@ -756,8 +901,8 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                             filtroFechaHistorial === 'ESPECIFICA' && styles.historyDateFilterChipActive,
                         ]}
                         onPress={() => {
-                            if (fechaEspecificaHistorial) {
-                                const [y, m] = fechaEspecificaHistorial.split('-').map(Number);
+                            if (fechaInicioRango) {
+                                const [y, m] = fechaInicioRango.split('-').map(Number);
                                 if (y && m) setMesCalendario(new Date(y, m - 1, 1));
                             } else {
                                 const hoy = new Date();
@@ -780,15 +925,18 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                                     : { color: '#164a96' },
                             ]}
                         >
-                            {filtroFechaHistorial === 'ESPECIFICA' && fechaEspecificaHistorial
-                                ? formatearClaveFechaCorta(fechaEspecificaHistorial)
+                            {filtroFechaHistorial === 'ESPECIFICA' && fechaInicioRango
+                                ? (fechaFinRango && fechaFinRango !== fechaInicioRango
+                                    ? `${formatearClaveFechaCorta(fechaInicioRango)} - ${formatearClaveFechaCorta(fechaFinRango)}`
+                                    : formatearClaveFechaCorta(fechaInicioRango))
                                 : 'Elegir fecha'}
                         </Text>
-                        {filtroFechaHistorial === 'ESPECIFICA' && fechaEspecificaHistorial && (
+                        {filtroFechaHistorial === 'ESPECIFICA' && fechaInicioRango && (
                             <TouchableOpacity
                                 onPress={(e) => {
                                     e?.stopPropagation?.();
-                                    setFechaEspecificaHistorial(null);
+                                    setFechaInicioRango(null);
+                                    setFechaFinRango(null);
                                     setFiltroFechaHistorial('TODAS');
                                 }}
                                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
@@ -956,7 +1104,11 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                                 tabActivo === 'PENDIENTES' && styles.bottomNavTextActive,
                             ]}
                         >
-                            {rolUsuario === RolBandeja.OPERADOR ? 'Nuevos y Pendientes' : 'En Proceso'}
+                            {rolUsuario === RolBandeja.OPERADOR
+                                ? 'Nuevos y Pendientes'
+                                : rolUsuario === RolBandeja.USUARIO
+                                    ? 'Solicitudes'
+                                    : 'En Proceso'}
                         </Text>
                     </TouchableOpacity>
 
@@ -1275,9 +1427,13 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                     <View style={styles.calendarModalCard}>
                         <View style={styles.manualModalHeader}>
                             <View style={{ flex: 1 }}>
-                                <Text style={styles.manualModalTitle}>Elegir fecha</Text>
+                                <Text style={styles.manualModalTitle}>Elegir rango de fechas</Text>
                                 <Text style={styles.manualModalSubtitle}>
-                                    Los días con punto azul tienen soportes en tu historial
+                                    {fechaInicioRango && fechaFinRango
+                                        ? `Del ${formatearClaveFechaCorta(fechaInicioRango)} al ${formatearClaveFechaCorta(fechaFinRango)}`
+                                        : fechaInicioRango
+                                            ? `Inicio: ${formatearClaveFechaCorta(fechaInicioRango)} — elige la fecha de fin`
+                                            : 'Toca la fecha de inicio y luego la fecha de fin'}
                                 </Text>
                             </View>
                             <TouchableOpacity
@@ -1341,7 +1497,13 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                                         return <View key={`vacio-${idx}`} style={styles.calendarCell} />;
                                     }
                                     const clave = `${anio}-${String(mes + 1).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
-                                    const seleccionado = filtroFechaHistorial === 'ESPECIFICA' && fechaEspecificaHistorial === clave;
+                                    const esExtremoRango = clave === fechaInicioRango || clave === fechaFinRango;
+                                    const estaEnRango = Boolean(
+                                        fechaInicioRango &&
+                                        fechaFinRango &&
+                                        clave > fechaInicioRango &&
+                                        clave < fechaFinRango,
+                                    );
                                     const esHoy = clave === claveHoyStr;
                                     const tieneDatos = diasConHistorialSet.has(clave);
 
@@ -1350,9 +1512,16 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                                             key={clave}
                                             style={styles.calendarCell}
                                             onPress={() => {
-                                                setFechaEspecificaHistorial(clave);
+                                                if (!fechaInicioRango || (fechaInicioRango && fechaFinRango)) {
+                                                    setFechaInicioRango(clave);
+                                                    setFechaFinRango(null);
+                                                } else if (clave < fechaInicioRango) {
+                                                    setFechaFinRango(fechaInicioRango);
+                                                    setFechaInicioRango(clave);
+                                                } else {
+                                                    setFechaFinRango(clave);
+                                                }
                                                 setFiltroFechaHistorial('ESPECIFICA');
-                                                setModalCalendarioVisible(false);
                                             }}
                                             activeOpacity={0.75}
                                         >
@@ -1360,14 +1529,16 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                                                 style={[
                                                     styles.calendarDayCircle,
                                                     esHoy && styles.calendarDayToday,
-                                                    seleccionado && styles.calendarDaySelected,
+                                                    estaEnRango && { backgroundColor: '#dbeafe' },
+                                                    esExtremoRango && styles.calendarDaySelected,
                                                 ]}
                                             >
                                                 <Text
                                                     style={[
                                                         styles.calendarDayText,
                                                         esHoy && styles.calendarDayTodayText,
-                                                        seleccionado && styles.calendarDaySelectedText,
+                                                        estaEnRango && { color: '#164a96', fontWeight: '700' },
+                                                        esExtremoRango && styles.calendarDaySelectedText,
                                                     ]}
                                                 >
                                                     {dia}
@@ -1377,7 +1548,7 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                                                 <View
                                                     style={[
                                                         styles.calendarDot,
-                                                        seleccionado && { backgroundColor: '#164a96' },
+                                                        esExtremoRango && { backgroundColor: '#164a96' },
                                                     ]}
                                                 />
                                             ) : (
@@ -1393,7 +1564,8 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                             <TouchableOpacity
                                 style={styles.manualCancelButton}
                                 onPress={() => {
-                                    setFechaEspecificaHistorial(null);
+                                    setFechaInicioRango(null);
+                                    setFechaFinRango(null);
                                     setFiltroFechaHistorial('TODAS');
                                     setModalCalendarioVisible(false);
                                 }}
@@ -1401,21 +1573,83 @@ export const BandejaScreen = ({ navigation, onLogout, rolActivo, rolesDisponible
                                 <Text style={styles.manualCancelText}>Ver todas</Text>
                             </TouchableOpacity>
                             <TouchableOpacity
-                                style={styles.manualSaveButton}
+                                style={[styles.manualSaveButton, !fechaInicioRango && { opacity: 0.55 }]}
+                                disabled={!fechaInicioRango}
                                 onPress={() => {
-                                    const hoy = new Date();
-                                    const claveHoyStr = `${hoy.getFullYear()}-${String(hoy.getMonth() + 1).padStart(2, '0')}-${String(hoy.getDate()).padStart(2, '0')}`;
-                                    setFechaEspecificaHistorial(claveHoyStr);
+                                    if (!fechaInicioRango) return;
+                                    if (!fechaFinRango) {
+                                        setFechaFinRango(fechaInicioRango);
+                                    }
                                     setFiltroFechaHistorial('ESPECIFICA');
                                     setModalCalendarioVisible(false);
                                 }}
                             >
-                                <Text style={styles.manualSaveText}>Ir a hoy</Text>
+                                <Text style={styles.manualSaveText}>Aplicar rango</Text>
                             </TouchableOpacity>
                         </View>
                     </View>
                 </View>
             </Modal>
+
+            {/* MODAL AVISO DE SOPORTE CONCLUIDO PARA CALIFICAR (USUARIO) */}
+            {pantallaEnfocada && rolUsuario === RolBandeja.USUARIO && ticketConcluidoModal !== null && (
+            <Modal
+                visible
+                transparent
+                animationType="fade"
+                onRequestClose={cerrarModalConcluido}
+            >
+                <View style={styles.manualModalBackdrop}>
+                    <View style={[styles.calendarModalCard, { maxWidth: 440 }]}>
+                        <View style={styles.manualModalHeader}>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                                <View style={{
+                                    width: 40,
+                                    height: 40,
+                                    borderRadius: 20,
+                                    backgroundColor: '#dcfce7',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    marginRight: 12,
+                                }}>
+                                    <AppIcon name="check" size={20} color="#15803d" />
+                                </View>
+                                <View style={{ flex: 1 }}>
+                                    <Text style={styles.manualModalTitle}>Soporte concluido</Text>
+                                    <Text style={styles.manualModalSubtitle}>
+                                        Ticket {ticketConcluidoModal?.codigo_ticket || `#${ticketConcluidoModal?.id_solicitud || ticketConcluidoModal?.id || ''}`}
+                                    </Text>
+                                </View>
+                            </View>
+                            <TouchableOpacity onPress={cerrarModalConcluido} style={styles.manualCloseButton}>
+                                <AppIcon name="close" size={17} color="#475569" />
+                            </TouchableOpacity>
+                        </View>
+
+                        <Text style={{ color: '#334155', fontSize: 14, lineHeight: 21, marginBottom: 18 }}>
+                            Tu soporte ha sido concluido por el equipo técnico. Puedes ingresar al ticket finalizado para calificar la atención recibida.
+                        </Text>
+
+                        <View style={styles.calendarFooterRow}>
+                            <TouchableOpacity
+                                style={styles.manualCancelButton}
+                                onPress={cerrarModalConcluido}
+                                activeOpacity={0.8}
+                            >
+                                <Text style={styles.manualCancelText}>Cancelar</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.manualSaveButton}
+                                onPress={irACalificarTicketConcluido}
+                                activeOpacity={0.82}
+                            >
+                                <Text style={styles.manualSaveText}>Ir a calificar</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+            )}
 
             {/* MENÚ LATERAL PARA CAMBIAR ENTRE ROLES */}
             <MenuLateralModal

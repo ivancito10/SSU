@@ -10,22 +10,6 @@
     color: white;
 }
 
-/**Esto es para habilitaR, TONOS VERDES */
-.btn-green {
-    background-color: #82E0AA;
-    color: #196F3D;
-    border-color: #196F3D;
-}
-
-.btn-green:hover {
-    background-color: #196F3D;
-    /* Fondo verde oscuro */
-    color: #82E0AA;
-    /* Texto verde claro */
-    border-color: #196F3D;
-    /* Borde verde claro */
-}
-
 /**ESTO ES PAR DESHABILITAR, TONOS ROJOS */
 .btn-red {
     background-color: #F1948A ;

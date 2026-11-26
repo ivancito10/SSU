@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { obtenerItem, guardarItem, eliminarItem } from '../utils/storage';
-import { View, ActivityIndicator, Platform, Alert, AppState } from 'react-native';
+import { View, ActivityIndicator, Platform, Alert, AppState, Image, Text } from 'react-native';
 import { registrarManejadorSesionExpirada, tokenJwtExpirado } from '../api/axios.config';
 import { AppAlert } from '../components/AlertaGlobalModal';
 import { theme } from '../theme/theme';
@@ -23,6 +23,7 @@ const TIEMPO_INACTIVIDAD_MS = 15 * 60 * 1000; // 15 minutos sin actividad del us
 
 export const AppNavigator = () => {
     const [cargando, setCargando] = useState(true);
+    const [mostrarBienvenida, setMostrarBienvenida] = useState(true);
     const [autenticado, setAutenticado] = useState(false);
     const [rolActivo, setRolActivo] = useState<string | null>(null);
     const [rolesDisponibles, setRolesDisponibles] = useState<string[]>([]);
@@ -179,7 +180,11 @@ export const AppNavigator = () => {
     };
 
     useEffect(() => {
-        verificarSesion();
+        const timerBienvenida = setTimeout(() => {
+            setMostrarBienvenida(false);
+            void verificarSesion();
+        }, 1800);
+        return () => clearTimeout(timerBienvenida);
     }, []);
 
     useEffect(() => {
@@ -281,6 +286,8 @@ export const AppNavigator = () => {
         const tipo = tipoNotificacionPendienteRef.current;
         if (tipo === 'ASIGNACION_TECNICO' && rolesDisponibles.includes('TECNICO')) {
             if (rolActivo !== 'TECNICO') void cambiarRol('TECNICO');
+        } else if (tipo === 'SOPORTE_CONCLUIDO' && rolesDisponibles.includes('USUARIO')) {
+            if (rolActivo !== 'USUARIO') void cambiarRol('USUARIO');
         } else if (
             (tipo === 'NUEVA_SOLICITUD_OPERADOR' || tipo === 'INSISTENCIA_SOPORTE') &&
             rolesDisponibles.includes('OPERADOR') &&
@@ -336,10 +343,18 @@ export const AppNavigator = () => {
         };
     }, []);
 
-    if (cargando) {
+    if (cargando || mostrarBienvenida) {
         return (
-            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: theme.colors.background }}>
-                <ActivityIndicator size="large" color={theme.colors.primary} />
+            <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#005096', paddingHorizontal: 28 }}>
+                <Image
+                    source={require('../../../assets/7.png')}
+                    style={{ width: 240, height: 140, marginBottom: 22 }}
+                    resizeMode="contain"
+                />
+                <Text style={{ color: '#ffffff', fontSize: 17, fontWeight: '700', textAlign: 'center', marginBottom: 22 }}>
+                    Bienvenido a Soporte SSU La Paz
+                </Text>
+                <ActivityIndicator size="large" color="#ffffff" />
             </View>
         );
     }

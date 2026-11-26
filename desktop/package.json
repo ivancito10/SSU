@@ -1,0 +1,50 @@
+{
+  "name": "soporte-ssu-desktop",
+  "version": "1.0.0",
+  "description": "Sistema de Soporte Técnico - SSU La Paz",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "prepare:web": "node scripts/copy-web.js",
+    "start": "electron .",
+    "build:exe": "npm run prepare:web && electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "bo.ssulpz.soporte.desktop",
+    "productName": "Soporte SSU La Paz",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "web-dist/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Soporte SSU La Paz",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico"
+    }
+  }
+}

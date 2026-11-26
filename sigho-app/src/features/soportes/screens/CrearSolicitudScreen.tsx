@@ -65,7 +65,7 @@ export const CrearSolicitudScreen = () => {
     const [ubicacionesGuardadas, setUbicacionesGuardadas] = useState<UbicacionGuardada[]>([]);
 
     // Estados locales para el ítem del problema
-    const [tipoSoporte, setTipoSoporte] = useState<number>(1);
+    const [tipoSoporte, setTipoSoporte] = useState<number | null>(null);
     const [tiposSoporte, setTiposSoporte] = useState<Array<{ id: number; nombre: string; opciones: Array<{ id: number; nombre: string }> }>>([]);
     const [opcionSoporte, setOpcionSoporte] = useState<{ id: number; nombre: string } | null>(null);
     const [opcionesSoporteVisibles, setOpcionesSoporteVisibles] = useState(true);
@@ -80,6 +80,7 @@ export const CrearSolicitudScreen = () => {
     const [errores, setErrores] = useState<{
         piso?: string;
         oficina?: string;
+        tipoSoporte?: string;
         descripcion?: string;
         opcionSoporte?: string;
     }>({});
@@ -103,7 +104,6 @@ export const CrearSolicitudScreen = () => {
                     nombre: String(tipo.nombre),
                     opciones: (tipo.opciones || []).filter((opcion: any) => opcion.estado !== false),
                 })));
-                if (datos.length > 0) setTipoSoporte(Number(datos[0].id));
             })
             .catch((error) => console.error('Error al cargar categorías de soporte:', error));
     }, []);
@@ -251,7 +251,7 @@ export const CrearSolicitudScreen = () => {
     };
 
     const manejarEnvio = () => {
-        const nuevosErrores: { piso?: string; oficina?: string; descripcion?: string; opcionSoporte?: string } = {};
+        const nuevosErrores: { piso?: string; oficina?: string; tipoSoporte?: string; descripcion?: string; opcionSoporte?: string } = {};
         const listaMensajes: string[] = [];
 
         if (!piso.trim()) {
@@ -259,18 +259,25 @@ export const CrearSolicitudScreen = () => {
             listaMensajes.push('• Piso requerido');
         }
 
+        if (tipoSoporte === null) {
+            nuevosErrores.tipoSoporte = 'Selecciona el tipo de problema';
+            listaMensajes.push('• Tipo de problema');
+        }
+
         if (!descripcion.trim()) {
             nuevosErrores.descripcion = 'Describe brevemente el problema presentado';
             listaMensajes.push('• Descripción detallada del problema');
         }
 
-        const opcionesDelTipo = tiposSoporte.find((tipo) => tipo.id === tipoSoporte)?.opciones || [];
+        const opcionesDelTipo = tipoSoporte !== null
+            ? (tiposSoporte.find((tipo) => tipo.id === tipoSoporte)?.opciones || [])
+            : [];
         if (opcionesDelTipo.length > 0 && !opcionSoporte) {
             nuevosErrores.opcionSoporte = 'Selecciona el equipo o servicio que presenta el problema';
             listaMensajes.push('• Opción de soporte');
         }
 
-        if (Object.keys(nuevosErrores).length > 0) {
+        if (Object.keys(nuevosErrores).length > 0 || tipoSoporte === null) {
             setErrores(nuevosErrores);
             setMensajeAlerta('Por favor completa todos los campos obligatorios marcados en rojo.');
 
@@ -304,7 +311,10 @@ export const CrearSolicitudScreen = () => {
         enviarSolicitud(payload, async () => {
             await guardarUbicacionEnHistorial(ubicacionActual);
             AppAlert.alert('¡Solicitud Enviada!', 'Tu solicitud de soporte ha sido registrada y está lista para ser atendida.');
-            navigation.goBack();
+            (navigation as any).navigate('Main', {
+                filtroInicial: 'PENDIENTES',
+                solicitudCreadaTs: Date.now(),
+            });
         }, imagenProblemaUri);
     };
 
@@ -682,6 +692,7 @@ export const CrearSolicitudScreen = () => {
                             <Text style={styles.inputLabel}>
                                 ¿Qué tipo de problema tienes? <Text style={styles.requiredAsterisk}>*</Text>
                             </Text>
+                            {errores.tipoSoporte && <Text style={styles.errorTextHelper}>{errores.tipoSoporte}</Text>}
 
                             {/* TARJETAS SELECCIONABLES CON CHECK A LA DERECHA */}
                             <View style={styles.categoriesContainer}>
@@ -698,6 +709,12 @@ export const CrearSolicitudScreen = () => {
                                                 setTipoSoporte(tipo.id);
                                                 setOpcionSoporte(null);
                                                 setOpcionesSoporteVisibles(true);
+                                                setErrores((prev) => {
+                                                    const next = { ...prev };
+                                                    delete next.tipoSoporte;
+                                                    delete next.opcionSoporte;
+                                                    return next;
+                                                });
                                             }}
                                             disabled={isLoading}
                                             activeOpacity={0.8}

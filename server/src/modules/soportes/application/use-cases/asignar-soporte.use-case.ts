@@ -17,9 +17,9 @@ export class AsignarSoporteUseCase {
     const asignacion = await this.soporteRepository.asignarSoporteTransaccional(idOperador, dto);
     const idSoporte = Number(dto.idTecnico ?? dto.id_soporte);
 
-    try {
-      if (idSoporte) {
-        await this.notificationService.enviarNotificacion(
+    if (idSoporte) {
+      void this.notificationService
+        .enviarNotificacion(
           idSoporte,
           'Nuevo Ticket Asignado',
           `Te asignaron el ticket ${asignacion.codigoTicket || `#${asignacion.idSolicitud ?? dto.idSolicitud}`}. Cambia al modo TÉCNICO para atenderlo.`,
@@ -30,10 +30,10 @@ export class AsignarSoporteUseCase {
             rolDestino: 'TECNICO',
             tipoNotificacion: 'ASIGNACION_TECNICO',
           }
-        );
-      }
-    } catch (error) {
-      console.error('Asignación exitosa, pero falló la notificación:', error);
+        )
+        .catch((error) => {
+          console.warn('Asignación exitosa, pero falló la notificación en segundo plano:', error);
+        });
     }
 
     return {

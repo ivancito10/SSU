@@ -34,7 +34,9 @@ export type NombreIcono =
     | 'id-card'
     | 'close'
     | 'arrow-left'
-    | 'arrow-right';
+    | 'arrow-right'
+    | 'face-id'
+    | 'fingerprint';
 
 interface AppIconProps {
     name: NombreIcono;
@@ -139,7 +141,7 @@ export const AppIcon = ({ name, size = 18, color = '#164a96' }: AppIconProps) =>
                     </svg>
                 );
             case 'pin':
-        case 'location':
+            case 'location':
             case 'location':
                 return (
                     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -219,7 +221,7 @@ export const AppIcon = ({ name, size = 18, color = '#164a96' }: AppIconProps) =>
                     </svg>
                 );
             case 'document':
-        case 'document-text':
+            case 'document-text':
             case 'document-text':
                 return (
                     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -269,6 +271,34 @@ export const AppIcon = ({ name, size = 18, color = '#164a96' }: AppIconProps) =>
                     <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
                         <line x1="19" y1="12" x2="5" y2="12" />
                         <polyline points="12 19 5 12 12 5" />
+                    </svg>
+                );
+            case 'face-id':
+                return (
+                    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M4 8V6a2 2 0 0 1 2-2h2" />
+                        <path d="M4 16v2a2 2 0 0 0 2 2h2" />
+                        <path d="M16 4h2a2 2 0 0 1 2 2v2" />
+                        <path d="M16 20h2a2 2 0 0 0 2-2v-2" />
+                        <line x1="9" y1="9" x2="9" y2="11" />
+                        <line x1="15" y1="9" x2="15" y2="11" />
+                        <path d="M12 9v4h-1" />
+                        <path d="M9 15.5c.8.8 1.9 1.2 3 1.2s2.2-.4 3-1.2" />
+                    </svg>
+                );
+            case 'fingerprint':
+                return (
+                    <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M2 12C2 6.5 6.5 2 12 2a10 10 0 0 1 8 4" />
+                        <path d="M5 19.5C5.5 18 6 15 6 12a6 6 0 0 1 .34-2" />
+                        <path d="M8.65 22c.21-.66.45-1.32.57-2" />
+                        <path d="M9 6.8a6 6 0 0 1 9 5.2v2" />
+                        <path d="M12 10a2 2 0 0 0-2 2c0 1.02-.1 2.51-.26 4" />
+                        <path d="M14 13.12c0 2.38 0 6.38-1 8.88" />
+                        <path d="M17.29 21.02c.12-.6.43-2.3.5-3.02" />
+                        <path d="M2 16h.01" />
+                        <path d="M21.8 16c.2-2 .131-5.354 0-6" />
+                        <path d="M5 19.5c.5-1.5 1-4.5 1-7.5" />
                     </svg>
                 );
             case 'arrow-right':
@@ -832,6 +862,71 @@ export const AppIcon = ({ name, size = 18, color = '#164a96' }: AppIconProps) =>
                         }}
                     />
                     <View style={{ width: size * 0.55, height: bw * 1.1, backgroundColor: color }} />
+                </View>
+            );
+
+        case 'face-id': {
+            const corner = size * 0.24;
+            const r = Math.max(3, size * 0.12);
+            return (
+                <View style={[box, { position: 'relative' }]}>
+                    {/* 4 esquinas del marco Face ID */}
+                    <View style={{ position: 'absolute', top: size * 0.1, left: size * 0.1, width: corner, height: corner, borderTopWidth: bw, borderLeftWidth: bw, borderColor: color, borderTopLeftRadius: r }} />
+                    <View style={{ position: 'absolute', top: size * 0.1, right: size * 0.1, width: corner, height: corner, borderTopWidth: bw, borderRightWidth: bw, borderColor: color, borderTopRightRadius: r }} />
+                    <View style={{ position: 'absolute', bottom: size * 0.1, left: size * 0.1, width: corner, height: corner, borderBottomWidth: bw, borderLeftWidth: bw, borderColor: color, borderBottomLeftRadius: r }} />
+                    <View style={{ position: 'absolute', bottom: size * 0.1, right: size * 0.1, width: corner, height: corner, borderBottomWidth: bw, borderRightWidth: bw, borderColor: color, borderBottomRightRadius: r }} />
+                    {/* Ojos */}
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: size * 0.34, marginTop: -size * 0.04 }}>
+                        <View style={{ width: bw * 1.1, height: size * 0.13, backgroundColor: color, borderRadius: bw }} />
+                        <View style={{ width: bw * 1.1, height: size * 0.13, backgroundColor: color, borderRadius: bw }} />
+                    </View>
+                    {/* Nariz */}
+                    <View style={{ width: bw, height: size * 0.13, backgroundColor: color, borderRadius: bw, marginTop: size * 0.02 }} />
+                    {/* Sonrisa */}
+                    <View style={{ width: size * 0.28, height: size * 0.1, borderBottomWidth: bw, borderLeftWidth: bw * 0.6, borderRightWidth: bw * 0.6, borderColor: color, borderBottomLeftRadius: size * 0.14, borderBottomRightRadius: size * 0.14, marginTop: size * 0.03 }} />
+                </View>
+            );
+        }
+
+        case 'fingerprint':
+            return (
+                <View style={box}>
+                    <View
+                        style={{
+                            width: size * 0.78,
+                            height: size * 0.84,
+                            borderRadius: size * 0.39,
+                            borderWidth: bw,
+                            borderColor: color,
+                            borderBottomColor: 'transparent',
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                        }}
+                    >
+                        <View
+                            style={{
+                                width: size * 0.52,
+                                height: size * 0.58,
+                                borderRadius: size * 0.26,
+                                borderWidth: bw,
+                                borderColor: color,
+                                borderBottomColor: 'transparent',
+                                justifyContent: 'center',
+                                alignItems: 'center',
+                            }}
+                        >
+                            <View
+                                style={{
+                                    width: size * 0.24,
+                                    height: size * 0.3,
+                                    borderRadius: size * 0.12,
+                                    borderWidth: bw,
+                                    borderColor: color,
+                                    borderBottomColor: 'transparent',
+                                }}
+                            />
+                        </View>
+                    </View>
                 </View>
             );
 

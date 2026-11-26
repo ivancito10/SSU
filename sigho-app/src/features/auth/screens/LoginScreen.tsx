@@ -15,6 +15,7 @@ import {
 import { useWindowDimensions, } from 'react-native';
 import { theme } from '../../../core/theme/theme';
 import { AppAlert } from '../../../core/components/AlertaGlobalModal';
+import { AppIcon } from '../../../core/components/AppIcon';
 import { guardarItem, obtenerItem, eliminarItem } from '../../../core/utils/storage';
 import { login } from '../api/auth.service';
 import { registrarParaNotificacionesPush } from '../../../core/utils/notifications';
@@ -147,6 +148,7 @@ export const LoginScreen = ({ onLogin, iniciarConContrasena = false }: { onLogin
     const [cargando, setCargando] = useState(false);
     const [metodoCargando, setMetodoCargando] = useState<'password' | 'biometrico' | null>(null);
     const [biometriaDisponible, setBiometriaDisponible] = useState(false);
+    const [tipoBiometria, setTipoBiometria] = useState<'faceid' | 'huella' | 'generico'>('generico');
     const [usarBiometria, setUsarBiometria] = useState(false);
     const [biometriaActiva, setBiometriaActiva] = useState(false);
     const [biometriaGuardadaAlIniciar, setBiometriaGuardadaAlIniciar] = useState(false);
@@ -177,11 +179,21 @@ export const LoginScreen = ({ onLogin, iniciarConContrasena = false }: { onLogin
         const cargarCredencialesRecordadas = async () => {
             try {
                 if (Platform.OS !== 'web') {
-                    const [tieneHardware, tieneBiometria, biometriaGuardada] = await Promise.all([
+                    const [tieneHardware, tieneBiometria, tipos, biometriaGuardada] = await Promise.all([
                         LocalAuthentication.hasHardwareAsync(),
                         LocalAuthentication.isEnrolledAsync(),
+                        LocalAuthentication.supportedAuthenticationTypesAsync(),
                         obtenerItem(STORAGE_KEY_LOGIN_BIOMETRICO),
                     ]);
+                    let tipoDetectado: 'faceid' | 'huella' | 'generico' = 'generico';
+                    if (Platform.OS === 'ios' && tipos.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
+                        tipoDetectado = 'faceid';
+                    } else if (tipos.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
+                        tipoDetectado = 'huella';
+                    } else if (tipos.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
+                        tipoDetectado = 'faceid';
+                    }
+                    setTipoBiometria(tipoDetectado);
                     const biometriaConfigurada = biometriaGuardada === 'true' && tieneHardware && tieneBiometria;
                     setBiometriaDisponible(tieneHardware && tieneBiometria);
                     setBiometriaGuardadaAlIniciar(biometriaConfigurada);
@@ -278,14 +290,27 @@ export const LoginScreen = ({ onLogin, iniciarConContrasena = false }: { onLogin
                 throw new Error('No hay credenciales guardadas. Ingresa con tu contraseña y activa el acceso biométrico.');
             }
 
+            const promptMessage =
+                tipoBiometria === 'faceid'
+                    ? 'Confirma tu identidad con Face ID'
+                    : tipoBiometria === 'huella'
+                        ? 'Confirma tu identidad con tu huella'
+                        : 'Confirma tu identidad';
+
             const resultado = await LocalAuthentication.authenticateAsync({
-                promptMessage: 'Confirma tu identidad',
+                promptMessage,
                 cancelLabel: 'Cancelar',
                 disableDeviceFallback: true,
             });
             if (!resultado.success) {
                 if (resultado.error !== 'user_cancel' && resultado.error !== 'system_cancel' && resultado.error !== 'app_cancel') {
-                    setErrorBiometrico('No se pudo validar la huella. Intenta de nuevo o ingresa con tu contraseña.');
+                    const msgFallo =
+                        tipoBiometria === 'faceid'
+                            ? 'No se pudo validar con Face ID. Intenta de nuevo o ingresa con tu contraseña.'
+                            : tipoBiometria === 'huella'
+                                ? 'No se pudo validar la huella. Intenta de nuevo o ingresa con tu contraseña.'
+                                : 'No se pudo validar tu biometría. Intenta de nuevo o ingresa con tu contraseña.';
+                    setErrorBiometrico(msgFallo);
                 }
                 return;
             }
@@ -303,7 +328,7 @@ export const LoginScreen = ({ onLogin, iniciarConContrasena = false }: { onLogin
             setCargando(false);
             setMetodoCargando(null);
         }
-    }, []);
+    }, [tipoBiometria]);
 
     useEffect(() => {
         if (
@@ -327,6 +352,33 @@ export const LoginScreen = ({ onLogin, iniciarConContrasena = false }: { onLogin
     }, [preferenciasCargadas, biometriaGuardadaAlIniciar, biometriaActiva, usarBiometria, mostrarLoginManual, handleBiometricLogin]);
 
     const mostrarSoloBiometria = Platform.OS !== 'web' && biometriaGuardadaAlIniciar && biometriaActiva && usarBiometria && !mostrarLoginManual;
+    const textosBiometria =
+        tipoBiometria === 'faceid'
+            ? {
+                titulo: 'Iniciar con Face ID',
+                subtitulo: 'Confirma tu identidad con Face ID para ingresar.',
+                esperando: 'Esperando validación con Face ID...',
+                sugerencia: 'Toca el ícono de Face ID o vuelve a intentar',
+                botonManual: 'INGRESAR CON FACE ID',
+                activarTexto: 'Activar ingreso con Face ID',
+            }
+            : tipoBiometria === 'huella'
+                ? {
+                    titulo: 'Iniciar con huella',
+                    subtitulo: 'Confirma tu identidad con tu huella digital.',
+                    esperando: 'Esperando validación con huella...',
+                    sugerencia: 'Toca el sensor de huella o vuelve a intentar',
+                    botonManual: 'INGRESAR CON HUELLA',
+                    activarTexto: 'Activar ingreso con huella',
+                }
+                : {
+                    titulo: 'Login biométrico',
+                    subtitulo: 'Confirma tu identidad con la biometría de este dispositivo.',
+                    esperando: 'Esperando validación biométrica…',
+                    sugerencia: 'Toca el sensor o vuelve a intentar',
+                    botonManual: 'INGRESAR CON BIOMETRÍA',
+                    activarTexto: Platform.OS === 'ios' ? 'Activar Face ID / Touch ID' : 'Activar ingreso biométrico',
+                };
 
     return (
         <View style={styles.root}>
@@ -365,9 +417,9 @@ export const LoginScreen = ({ onLogin, iniciarConContrasena = false }: { onLogin
                             <View style={styles.card}>
                                 {mostrarSoloBiometria ? (
                                     <View style={styles.biometricOnlyPanel}>
-                                        <Text style={styles.cardTitle}>Login biométrico</Text>
+                                        <Text style={styles.cardTitle}>{textosBiometria.titulo}</Text>
                                         <Text style={styles.cardSubtitle}>
-                                            Confirma tu identidad con la huella o biometría de este dispositivo.
+                                            {textosBiometria.subtitulo}
                                         </Text>
                                         <TouchableOpacity
                                             style={styles.fingerprintCircle}
@@ -375,10 +427,16 @@ export const LoginScreen = ({ onLogin, iniciarConContrasena = false }: { onLogin
                                             disabled={cargando}
                                             activeOpacity={0.75}
                                         >
-                                            <Text style={styles.fingerprintMark}>◎</Text>
+                                            {tipoBiometria === 'faceid' ? (
+                                                <AppIcon name="face-id" size={46} color="#0f8b78" />
+                                            ) : tipoBiometria === 'huella' ? (
+                                                <AppIcon name="fingerprint" size={46} color="#0f8b78" />
+                                            ) : (
+                                                <Text style={styles.fingerprintMark}>◎</Text>
+                                            )}
                                         </TouchableOpacity>
                                         <Text style={styles.biometricHint}>
-                                            {cargando ? 'Esperando validación biométrica…' : 'Toca el sensor o vuelve a intentar'}
+                                            {cargando ? textosBiometria.esperando : textosBiometria.sugerencia}
                                         </Text>
                                         {Boolean(errorBiometrico) && (
                                             <Text style={styles.biometricError}>{errorBiometrico}</Text>
@@ -484,7 +542,12 @@ export const LoginScreen = ({ onLogin, iniciarConContrasena = false }: { onLogin
                                         activeOpacity={0.8}
                                     >
                                         {cargando && metodoCargando === 'biometrico' ? <ActivityIndicator color="#1d5bbf" /> : (
-                                            <Text style={styles.biometricButtonText}>◉  INGRESAR CON HUELLA / BIOMETRÍA</Text>
+                                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                                {tipoBiometria !== 'generico' && (
+                                                    <AppIcon name={tipoBiometria === 'faceid' ? 'face-id' : 'fingerprint'} size={18} color="#1d4ed8" />
+                                                )}
+                                                <Text style={styles.biometricButtonText}>{textosBiometria.botonManual}</Text>
+                                            </View>
                                         )}
                                     </TouchableOpacity>
                                 )}
@@ -520,7 +583,7 @@ export const LoginScreen = ({ onLogin, iniciarConContrasena = false }: { onLogin
                                             {usarBiometria && <Text style={styles.checkboxMark}>✓</Text>}
                                         </View>
                                         <Text style={styles.rememberText}>
-                                            {Platform.OS === 'ios' ? 'Activar Face ID / Touch ID' : 'Activar ingreso con huella'}
+                                            {textosBiometria.activarTexto}
                                         </Text>
                                     </TouchableOpacity>
                                 )}

@@ -10,6 +10,7 @@ class RecetaManual extends Model
     protected $table = 'enfermeria.receta_manual';
 
     protected $fillable = [
+        'numero_receta',
         'id_persona',
         'id_especialista',
         'id_medicamento',

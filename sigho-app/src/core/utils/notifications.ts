@@ -43,9 +43,19 @@ export async function registrarParaNotificacionesPush(): Promise<string | undefi
         const { status: existingStatus } = await Notifications.getPermissionsAsync();
         let finalStatus = existingStatus;
 
-        // Si no tiene permiso, se lo pedimos al usuario
+        // Si no tiene permiso, se lo pedimos al usuario (en iOS solicitamos alerta, sonido y badge explícitamente)
         if (existingStatus !== 'granted') {
-            const { status } = await Notifications.requestPermissionsAsync();
+            const { status } = await Notifications.requestPermissionsAsync(
+                Platform.OS === 'ios'
+                    ? {
+                        ios: {
+                            allowAlert: true,
+                            allowBadge: true,
+                            allowSound: true,
+                        },
+                    }
+                    : undefined
+            );
             finalStatus = status;
         }
 
@@ -54,14 +64,24 @@ export async function registrarParaNotificacionesPush(): Promise<string | undefi
             return undefined;
         }
 
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
         try {
-            //IMPORTANTE: Usamos getDevicePushTokenAsync() para obtener el token puro de Firebase (FCM)
+            // IMPORTANTE: Usamos getDevicePushTokenAsync() para obtener el token puro de Firebase (FCM)
             // porque tu backend usa firebase-admin, NO el servidor intermediario de Expo.
-            const pushTokenData = await Notifications.getDevicePushTokenAsync();
-            token = pushTokenData.data;
+            // Timeout de 4s para no colgar la app si no hay salida a internet (solo red LAN).
+            const timeoutPromise = new Promise<never>((_, reject) => {
+                timeoutId = setTimeout(() => reject(new Error('Timeout obteniendo token FCM (sin internet).')), 4000);
+            });
+            const pushTokenData: any = await Promise.race([
+                Notifications.getDevicePushTokenAsync(),
+                timeoutPromise,
+            ]);
+            token = pushTokenData?.data;
             console.log('Token FCM generado:', token);
         } catch (error) {
-            console.error('Error generando token FCM:', error);
+            console.warn('No se pudo generar token FCM (posiblemente sin salida a internet):', error);
+        } finally {
+            if (timeoutId) clearTimeout(timeoutId);
         }
     } else {
         console.log('Estás en un emulador o web. Usa un dispositivo físico para Push.');

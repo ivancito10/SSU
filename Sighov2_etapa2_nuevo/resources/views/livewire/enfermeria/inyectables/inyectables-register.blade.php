@@ -3,7 +3,7 @@
     <div style="display: flex; justify-content: space-between; align-items: center; background-color:#34495e; padding:5px; border-radius:5px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);">
         <div style="display: flex; align-items: center; padding-left: 10px;">
             <h7 style="font-family: Verdana, sans-serif; color: white; margin: 0; text-transform: uppercase;">
-                <i class="fas fa-syringe mr-2"></i> ENFERMERÍA - REGISTRAR INYECCIÓN
+                <i class="fas fa-syringe mr-2"></i> ENFERMERÍA - {{ $modoEdicion ? 'EDITAR INYECCIÓN' : 'REGISTRAR INYECCIÓN' }}
             </h7>
         </div>
         <x-atras-button wire:click="cancelar" style="margin-left: auto; padding-right:10px;">ATRÁS</x-atras-button>
@@ -16,10 +16,10 @@
             <div class="p-3 d-flex align-items-center shadow-sm" style="background-color: #f8fafc; border-radius: 5px; border: 1px solid #e2e8f0;">
                 <strong style="color: #2471a3; font-size: 1.1rem;" class="mr-4">TIPO DE RECETA:</strong>
                 <div class="btn-group shadow-sm" role="group">
-                    <button type="button" class="btn {{ $tipoReceta === 'SISTEMA' ? 'btn-primary font-weight-bold' : 'btn-outline-primary' }}" wire:click="setTipoReceta('SISTEMA')">
+                    <button type="button" class="btn {{ $tipoReceta === 'SISTEMA' ? 'btn-primary font-weight-bold' : 'btn-outline-primary' }}" @if(!$modoEdicion) wire:click="setTipoReceta('SISTEMA')" @elseif($tipoReceta !== 'SISTEMA') disabled @endif>
                         <i class="fas fa-desktop mr-1"></i> DEL SISTEMA
                     </button>
-                    <button type="button" class="btn {{ $tipoReceta === 'MANUAL' ? 'btn-primary font-weight-bold' : 'btn-outline-primary' }}" wire:click="setTipoReceta('MANUAL')">
+                    <button type="button" class="btn {{ $tipoReceta === 'MANUAL' ? 'btn-primary font-weight-bold' : 'btn-outline-primary' }}" @if(!$modoEdicion) wire:click="setTipoReceta('MANUAL')" @elseif($tipoReceta !== 'MANUAL') disabled @endif>
                         <i class="fas fa-file-signature mr-1"></i> MANUAL FÍSICA
                     </button>
                 </div>
@@ -91,7 +91,7 @@
                                         <th style="width: 50px;">#</th>
                                         <th>RECETA</th>
                                         <th>MEDICAMENTO INYECCIÓN</th>
-                                        <th style="width: 220px;">VÍA PARENTERAL</th>
+                                        <th style="width: 220px;">VÍA PARENTERAL <span style="color: #ffb3b3;">*</span></th>
                                         <th style="width: 120px;">SELECCIONAR</th>
                                     </tr>
                                 </thead>
@@ -102,11 +102,15 @@
                                             <td style="vertical-align: middle;"><span class="badge badge-light border">{{ $nroRecetaBusqueda }}</span></td>
                                             <td style="vertical-align: middle;" class="text-left font-weight-bold">{{ $med['nombre'] }}</td>
                                             <td style="vertical-align: middle;">
-                                                <select class="form-control form-control-sm" wire:model="medicamentosRecetaSistema.{{ $idx }}.id_via_parenteral">
+                                                <select class="form-control form-control-sm @error('medicamentosRecetaSistema.' . $idx . '.id_via_parenteral') is-invalid @enderror" wire:model="medicamentosRecetaSistema.{{ $idx }}.id_via_parenteral">
+                                                    <option value="">Seleccione vía...</option>
                                                     @foreach ($viasParenterales as $via)
                                                         <option value="{{ is_array($via) ? $via['id'] : $via->id }}">{{ is_array($via) ? $via['nombre'] : $via->nombre }}</option>
                                                     @endforeach
                                                 </select>
+                                                @error('medicamentosRecetaSistema.' . $idx . '.id_via_parenteral')
+                                                    <div class="text-danger small mt-1"><b>{{ $message }}</b></div>
+                                                @enderror
                                             </td>
                                             <td style="vertical-align: middle;">
                                                 <button type="button" class="btn btn-sm btn-success" wire:click="agregarInyeccionSistema({{ $idx }})">
@@ -159,35 +163,23 @@
                     </div>
 
                     <div class="row align-items-end">
-                        <div class="col-lg-6 col-md-12 col-sm-12 col-12 position-relative">
-                            <label class="font-weight-bold text-dark"><i class="fas fa-user-md mr-1"></i> MÉDICO SOLICITANTE: <span style="color:#cb4335;"><b>*</b></span></label>
+                        <div class="col-lg-3 col-md-3 col-sm-12 col-12">
+                            <label class="font-weight-bold text-dark"><i class="fas fa-user-md mr-1"></i> SELECCIONAR MÉDICO: <span style="color:#cb4335;"><b>*</b></span></label>
+                            <button type="button" class="btn btn-block font-weight-bold @error('idEspecialista') btn-danger text-white @else btn-outline-primary @enderror" wire:click="abrirModalEspecialistas">
+                                <i class="fas fa-search mr-1"></i> BUSCAR MÉDICO
+                            </button>
+                        </div>
+                        <div class="col-lg-3 col-md-9 col-sm-12 col-12">
+                            <label class="font-weight-bold text-dark">MÉDICO SOLICITANTE:</label>
                             <div class="input-group">
-                                <input type="text" class="form-control input-comun @error('idEspecialista') is-invalid @enderror" placeholder="Escriba el especialista..." wire:model.live.debounce.300ms="buscarEspecialista" @if($idEspecialista) readonly style="background-color: #f8fafc; font-weight: bold;" @endif>
+                                <input type="text" class="form-control input-comun font-weight-bold text-dark @error('idEspecialista') is-invalid @enderror" style="background-color: #f8fafc;" value="{{ $nombreEspecialistaSeleccionado }}" placeholder="Seleccione un médico..." disabled>
                                 @if($idEspecialista)
                                     <div class="input-group-append">
-                                        <button type="button" class="btn btn-outline-danger" wire:click="limpiarEspecialista"><i class="fas fa-times"></i></button>
+                                        <button type="button" class="btn btn-outline-danger" wire:click="limpiarEspecialista" title="Quitar médico"><i class="fas fa-times"></i></button>
                                     </div>
                                 @endif
                             </div>
                             @error('idEspecialista') <div class="text-danger small mt-1"><b>{{ $message }}</b></div> @enderror
-                            
-                            @if($mostrarDropdownEspecialistas && count($especialistasEncontrados) > 0)
-                                <ul class="list-group position-absolute w-100 shadow-lg" style="z-index: 1050; max-height: 230px; overflow-y: auto; top: 100%; left: 0;">
-                                    @foreach($especialistasEncontrados as $esp)
-                                        @php
-                                            $idEsp = $esp['idEspecialista'] ?? $esp['id'] ?? null;
-                                            $nom = $esp['nombreCompleto'] ?? $esp['nombre'] ?? '';
-                                            $espNombre = is_array($esp['especialidad'] ?? null) ? ($esp['especialidad']['nombre'] ?? 'MEDICINA') : ($esp['especialidad'] ?? 'MEDICINA');
-                                        @endphp
-                                        <li class="list-group-item list-group-item-action d-flex justify-content-between align-items-center py-2" style="cursor: pointer;" wire:click="seleccionarEspecialista({{ $idEsp }}, '{{ addslashes($nom) }}', '{{ addslashes($espNombre) }}')">
-                                            <div><i class="fas fa-stethoscope text-secondary mr-2"></i><span class="font-weight-bold text-dark">{{ $nom }}</span></div>
-                                            <span class="badge badge-primary px-2 py-1">{{ $espNombre }}</span>
-                                        </li>
-                                    @endforeach
-                                </ul>
-                            @elseif($mostrarDropdownEspecialistas && strlen(trim($buscarEspecialista)) >= 2)
-                                <div class="position-absolute w-100 bg-white border rounded p-2 text-muted shadow-sm" style="z-index: 1050; top: 100%; left: 0;"><small><i class="fas fa-info-circle mr-1"></i> No se encontraron especialistas.</small></div>
-                            @endif
                         </div>
                         
                         <div class="col-lg-3 col-md-6 col-sm-12 col-12">
@@ -207,36 +199,23 @@
                     <h6 class="font-weight-bold mb-3" style="color: #2471a3;">AGREGAR MEDICAMENTOS INYECCIÓN:</h6>
                     
                     <div class="row align-items-end">
-                        <div class="col-lg-5 col-md-12 col-sm-12 col-12 position-relative">
-                            <label class="font-weight-bold text-dark"><i class="fas fa-pills mr-1"></i> INYECCIÓN MEDICAMENTO: <span style="color:#cb4335;"><b>*</b></span></label>
+                        <div class="col-lg-2 col-md-4 col-sm-12 col-12">
+                            <label class="font-weight-bold text-dark"><i class="fas fa-pills mr-1"></i> MEDICAMENTO: <span style="color:#cb4335;"><b>*</b></span></label>
+                            <button type="button" class="btn btn-block font-weight-bold @error('idMedicamentoManual') btn-danger text-white @else btn-outline-primary @enderror" wire:click="abrirModalMedicamentos">
+                                <i class="fas fa-search mr-1"></i> BUSCAR
+                            </button>
+                        </div>
+                        <div class="col-lg-3 col-md-8 col-sm-12 col-12">
+                            <label class="font-weight-bold text-dark">INYECCIÓN MEDICAMENTO:</label>
                             <div class="input-group">
-                                <input type="text" class="form-control input-comun @error('idMedicamentoManual') is-invalid @enderror" placeholder="Escriba código o nombre..." wire:model.live.debounce.300ms="buscarMedicamento" @if($idMedicamentoManual) readonly style="background-color: #f8fafc; font-weight: bold;" @endif>
+                                <input type="text" class="form-control input-comun font-weight-bold text-dark @error('idMedicamentoManual') is-invalid @enderror" style="background-color: #f8fafc;" value="{{ $nombreMedicamentoSeleccionado }}" placeholder="Seleccione inyectable..." disabled>
                                 @if($idMedicamentoManual)
                                     <div class="input-group-append">
-                                        <button type="button" class="btn btn-outline-danger" wire:click="limpiarMedicamentoInyectable"><i class="fas fa-times"></i></button>
+                                        <button type="button" class="btn btn-outline-danger" wire:click="limpiarMedicamentoInyectable" title="Quitar medicamento"><i class="fas fa-times"></i></button>
                                     </div>
                                 @endif
                             </div>
                             @error('idMedicamentoManual') <div class="text-danger small mt-1"><b>{{ $message }}</b></div> @enderror
-
-                            @if($mostrarDropdownMedicamentos && count($medicamentosFiltrados) > 0)
-                                <ul class="list-group position-absolute w-100 shadow-lg" style="z-index: 1050; max-height: 230px; overflow-y: auto; top: 100%; left: 0;">
-                                    @foreach($medicamentosFiltrados as $med)
-                                        @php
-                                            $idMed = $med['id'];
-                                            $cod = $med['codigo_medicamento'] ?? '';
-                                            $nom = $med['nombre'] ?? '';
-                                            $forma = $med['forma_farmaceutica'] ?? 'Inyectable';
-                                        @endphp
-                                        <li class="list-group-item list-group-item-action d-flex justify-content-between align-items-center py-2" style="cursor: pointer;" wire:click="seleccionarMedicamentoInyectable({{ $idMed }}, '{{ addslashes($cod) }}', '{{ addslashes($nom) }}')">
-                                            <div><span class="badge badge-light border text-secondary font-weight-bold mr-1">{{ $cod }}</span><span class="font-weight-bold text-dark">{{ $nom }}</span></div>
-                                            <span class="badge badge-info px-2 py-1">{{ $forma }}</span>
-                                        </li>
-                                    @endforeach
-                                </ul>
-                            @elseif($mostrarDropdownMedicamentos && strlen(trim($buscarMedicamento)) >= 2)
-                                <div class="position-absolute w-100 bg-white border rounded p-2 text-muted shadow-sm" style="z-index: 1050; top: 100%; left: 0;"><small><i class="fas fa-info-circle mr-1"></i> No se encontraron inyectables.</small></div>
-                            @endif
                         </div>
                         
                         <div class="col-lg-2 col-md-4 col-sm-6 col-12">
@@ -436,74 +415,9 @@
     {{-- ========================================================== --}}
     {{-- MODALES                                                    --}}
     {{-- ========================================================== --}}
-    <div wire:ignore.self class="modal fade" id="modalAsegurados" tabindex="-1" role="dialog" aria-hidden="true">
-        <div class="modal-dialog modal-xl modal-dialog-centered" role="document">
-            <div class="modal-content">
-                <div class="modal-header text-white" style="background-color: #2471a3;">
-                    <h5 class="modal-title font-weight-bold"><i class="fas fa-users mr-2"></i> LISTADO DE PACIENTES</h5>
-                    <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
-                </div>
-                <div class="modal-body">
-                    <div class="input-group mb-3">
-                        <div class="input-group-prepend"><span class="input-group-text"><i class="fas fa-search"></i></span></div>
-                        <input type="text" class="form-control" placeholder="Buscar por Nombre, C.I. o Matrícula..." wire:model.live.debounce.300ms="terminoBusquedaPaciente">
-                    </div>
-                    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
-                        <table class="table table-hover table-striped text-center mb-0">
-                            <thead style="background-color: #2471a3; color: white;">
-                                <tr><th>#</th><th>C.I.</th><th>MATRÍCULA</th><th>NOMBRE COMPLETO</th><th>TIPO ASEGURADO</th><th>OPCIONES</th></tr>
-                            </thead>
-                            <tbody>
-                                @forelse ($listaPacientesModal as $i => $pac)
-                                    <tr>
-                                        <td>{{ $i + 1 }}</td>
-                                        <td class="font-weight-bold">{{ $pac['ci'] ?? 'S/C' }}</td>
-                                        <td><span class="badge badge-light border">{{ $pac['matricula'] ?? 'S/M' }}</span></td>
-                                        <td class="text-left font-weight-bold">{{ $pac['nombreCompleto'] ?? $pac['nombre_completo'] ?? '' }}</td>
-                                        <td><span class="badge badge-info">{{ $pac['tipoAsegurado'] ?? 'TITULAR' }}</span></td>
-                                        <td>
-                                            <button type="button" class="btn btn-sm btn-success" wire:click="seleccionarPacienteModal({{ $pac['idPersona'] ?? $pac['id'] }}, '{{ addslashes($pac['nombreCompleto'] ?? $pac['nombre_completo'] ?? '') }}', '{{ $pac['ci'] ?? '' }}', '{{ $pac['matricula'] ?? '' }}')">
-                                                <i class="fas fa-check"></i>
-                                            </button>
-                                        </td>
-                                    </tr>
-                                @empty
-                                    <tr><td colspan="6" class="py-3 text-muted">No se encontraron pacientes coincidentes.</td></tr>
-                                @endforelse
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-                <div class="modal-footer"><button type="button" class="btn btn-secondary" data-dismiss="modal">CERRAR</button></div>
-            </div>
-        </div>
-    </div>
-
-    @if($modalBuscarPaciente)
-        <div class="modal fade show" tabindex="-1" style="display: block !important; background-color: rgba(0, 0, 0, 0.6); z-index: 99999;">
-            <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
-                <div class="modal-content shadow-lg border-0" style="border-radius: 6px;">
-                    <div class="modal-header d-flex align-items-center py-2 px-3" style="background-color: #f8fafc; border-bottom: 1px solid #e2e8f0;">
-                        <h5 class="modal-title font-weight-bold text-dark d-flex align-items-center" style="font-size: 15px;">
-                            <i class="fas fa-pencil-alt mr-2" style="color: #fd7e14;"></i> LISTADO DE PACIENTES
-                        </h5>
-                        <button type="button" class="close text-muted" wire:click="cerrarModalPacientes" style="outline: none; font-size: 22px;">
-                            <span aria-hidden="true">&times;</span>
-                        </button>
-                    </div>
-                    <div class="modal-body p-3" style="background-color: #ffffff;">
-                        <div class="p-2 mb-2 font-weight-bold text-primary" style="background-color: #e0f2fe; border-radius: 4px; font-size: 12px; letter-spacing: 0.5px;">LISTA DE ASEGURADOS</div>
-                        <livewire:enfermeria.inyectables.select-paciente-table />
-                    </div>
-                    <div class="modal-footer py-2 px-3 d-flex justify-content-end" style="background-color: #f8fafc; border-top: 1px solid #e2e8f0;">
-                        <button type="button" class="btn btn-sm btn-outline-danger font-weight-bold d-flex align-items-center" wire:click="cerrarModalPacientes" style="border-radius: 4px; padding: 4px 14px;">
-                            <i class="fas fa-times mr-1"></i> CERRAR
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    @endif
+    @include('livewire.enfermeria.inyectables.modalPersonasLista')
+    @include('livewire.enfermeria.inyectables.modalEspecialistasLista')
+    @include('livewire.enfermeria.inyectables.modalMedicamentosLista')
 
     {{-- SCRIPTS --}}
     <script>
@@ -542,6 +456,12 @@
                     confirmButtonText: 'Aceptar',
                     confirmButtonColor: '#6f42c1'
                 });
+            });
+
+            window.addEventListener('cerrar_modal_registrar_inyeccion', () => {
+                if (!document.getElementById('modalRegistrarInyeccion')) {
+                    window.location.href = "{{ route('enfermeria.inyectables.index') }}";
+                }
             });
         });
     </script>

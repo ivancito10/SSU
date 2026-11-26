@@ -347,7 +347,9 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
       // Cerrar la asignación del técnico actual; fecha_inicio permanece NULL si no inició el proceso.
       const etapaCerrada = await queryRunner.query(
         `UPDATE administracion.soporte_asignaciones
-         SET estado = 'DERIVADA', fecha_fin = CURRENT_TIMESTAMP
+         SET estado = 'DERIVADA',
+             fecha_fin = CURRENT_TIMESTAMP,
+             fecha_llegada = CASE WHEN fecha_en_camino IS NOT NULL THEN COALESCE(fecha_llegada, CURRENT_TIMESTAMP) ELSE fecha_llegada END
          WHERE id = $1 AND id_soporte = $2 AND estado IN ('ASIGNADA', 'EN_PROCESO')
          RETURNING id`,
         [idAsignacion, idDeSoporte]
@@ -420,22 +422,27 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
         `UPDATE administracion.soporte_asignaciones
          SET fecha_fin = CURRENT_TIMESTAMP,
              fecha_inicio = COALESCE(fecha_inicio, fecha_asignacion),
+             fecha_llegada = CASE WHEN fecha_en_camino IS NOT NULL THEN COALESCE(fecha_llegada, CURRENT_TIMESTAMP) ELSE fecha_llegada END,
              estado = 'FINALIZADA',
              observacion = $1
          WHERE id = $2
          RETURNING fecha_fin`,
         [dto.observacion ?? null, idAsignacion]
       );
-      asignacion.fechaFin = cierreResult?.[0]?.fecha_fin ?? new Date();
+      const filasCierre = Array.isArray(cierreResult?.[0]) ? cierreResult[0] : cierreResult;
+      asignacion.fechaFin = filasCierre?.[0]?.fecha_fin ?? new Date();
 
       // Actualizamos también el estado de la cabecera soporte_solicitudes a FINALIZADA
-      await queryRunner.query(
+      const solicitudActualizada = await queryRunner.query(
         `UPDATE administracion.soporte_solicitudes s
          SET estado = 'FINALIZADA', updated_at = CURRENT_TIMESTAMP
          FROM administracion.soporte_solicitud_items si
-         WHERE si.id_solicitud = s.id AND si.id = $1`,
+         WHERE si.id_solicitud = s.id AND si.id = $1
+         RETURNING s.id, s.id_usuario, s.codigo_ticket, COALESCE(s.es_manual, FALSE) as es_manual`,
         [asignacion.idSolicitudItem]
       );
+      const filasCabecera = Array.isArray(solicitudActualizada?.[0]) ? solicitudActualizada[0] : solicitudActualizada;
+      const cabecera = filasCabecera?.[0];
 
       // 3. Crear el registro del acta/evidencia fotográfica
       const nuevaActa = new SoporteArchivoActaTypeOrmEntity();
@@ -450,6 +457,10 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
 
       return {
         idAsignacion: asignacion.id,
+        idSolicitud: cabecera?.id ? Number(cabecera.id) : undefined,
+        idUsuario: cabecera?.id_usuario ? Number(cabecera.id_usuario) : undefined,
+        codigoTicket: cabecera?.codigo_ticket ?? undefined,
+        esManual: Boolean(cabecera?.es_manual),
         fechaFin: asignacion.fechaFin,
         actaUrl: nuevaActa.rutaUrl
       };
@@ -559,7 +570,7 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
 
     query += `
       GROUP BY s.id, s.codigo_ticket, s.id_usuario, s.piso, s.oficina, s.consultorio, s.estado, s.created_at, s.updated_at
-      ORDER BY s.created_at ASC
+      ORDER BY s.created_at DESC, s.id DESC
     `;
 
     return await this.dataSource.query(query, params);
@@ -760,7 +771,7 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
         s.oficina, 
         s.consultorio,
         s.estado
-      ORDER BY s.created_at ASC
+      ORDER BY s.created_at DESC, s.id DESC
     `;
 
     // Ejecutamos la consulta
@@ -834,7 +845,7 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
       params.push(estadoFiltro);
     }
 
-    query += ` ORDER BY a.fecha_asignacion ASC`;
+    query += ` ORDER BY a.fecha_asignacion DESC, a.id DESC`;
 
     return await this.dataSource.query(query, params);
   }
@@ -971,7 +982,7 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
       params.push(estadoFiltro);
     }
 
-    query += ` ORDER BY a.fecha_asignacion ASC`;
+    query += ` ORDER BY COALESCE(CASE WHEN a.estado = 'ASIGNADA' AND legado.fecha_derivacion IS NOT NULL THEN legado.fecha_derivacion ELSE a.fecha_asignacion END, s.created_at) DESC, a.id DESC`;
 
     return await this.dataSource.query(query, params);
   }
@@ -1105,6 +1116,7 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
   }
 
   async obtenerHistorialTecnicosSolicitud(idSolicitud: number): Promise<any[]> {
+    await this.asegurarColumnasUbicacionViaje();
     return await this.dataSource.query(`
       WITH etapas AS (
         SELECT a.id AS id_asignacion, a.id_soporte,
@@ -1124,6 +1136,15 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
           CASE WHEN a.fecha_inicio IS NOT NULL AND NOT (a.estado = 'ASIGNADA' AND legado.fecha_derivacion IS NOT NULL)
             THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (COALESCE(a.fecha_fin, CURRENT_TIMESTAMP) - a.fecha_inicio))))::int
             ELSE NULL END AS segundos_en_proceso,
+          a.fecha_en_camino,
+          a.latitud_en_camino,
+          a.longitud_en_camino,
+          a.fecha_llegada,
+          a.latitud_llegada,
+          a.longitud_llegada,
+          CASE WHEN a.fecha_en_camino IS NOT NULL
+            THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (COALESCE(a.fecha_llegada, a.fecha_fin, CURRENT_TIMESTAMP) - a.fecha_en_camino))))::int
+            ELSE NULL END AS segundos_en_camino,
           entrada.justificacion AS motivo_entrada,
           salida.rol_derivacion,
           salida.fecha AS fecha_derivacion,
@@ -1175,7 +1196,15 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
           COALESCE(NULLIF(TRIM(CONCAT_WS(' ', pdes.nombres, pdes.p_apellido, pdes.s_apellido)), ''), udest.name) AS nombre_destino,
           NULL::timestamp AS fecha_asignacion, NULL::timestamp AS fecha_inicio, r.fecha AS fecha_fin,
           'DERIVADA'::varchar AS estado, NULL::int AS segundos_desde_asignacion,
-          NULL::int AS segundos_en_proceso, r.justificacion AS motivo_entrada,
+          NULL::int AS segundos_en_proceso,
+          NULL::timestamp AS fecha_en_camino,
+          NULL::double precision AS latitud_en_camino,
+          NULL::double precision AS longitud_en_camino,
+          NULL::timestamp AS fecha_llegada,
+          NULL::double precision AS latitud_llegada,
+          NULL::double precision AS longitud_llegada,
+          NULL::int AS segundos_en_camino,
+          r.justificacion AS motivo_entrada,
           r.rol_derivacion, r.fecha AS fecha_derivacion, r.justificacion AS motivo_derivacion,
           r.fecha AS orden
         FROM administracion.soporte_reasignaciones r
@@ -1199,6 +1228,7 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
       )
       SELECT id_asignacion, id_soporte, nombre_tecnico, nombre_actor, rol_actor, tipo_movimiento, nombre_destino,
         fecha_asignacion, fecha_inicio, fecha_fin, estado, segundos_desde_asignacion, segundos_en_proceso,
+        fecha_en_camino, latitud_en_camino, longitud_en_camino, fecha_llegada, latitud_llegada, longitud_llegada, segundos_en_camino,
         motivo_entrada, rol_derivacion, fecha_derivacion, motivo_derivacion
       FROM etapas ORDER BY orden ASC NULLS LAST, id_asignacion ASC
     `, [idSolicitud]);
@@ -1284,10 +1314,12 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
     await queryRunner.startTransaction();
 
     try {
-      // Actualizamos la asignación del técnico a EN_PROCESO y registramos fecha_inicio
+      // Actualizamos la asignación del técnico a EN_PROCESO y registramos fecha_inicio y fecha_en_camino
+      await this.asegurarColumnasUbicacionViaje();
       const asignaciones = await queryRunner.query(
         `UPDATE administracion.soporte_asignaciones a
          SET estado = 'EN_PROCESO',
+             fecha_en_camino = COALESCE(a.fecha_en_camino, CURRENT_TIMESTAMP),
              fecha_asignacion = CASE WHEN EXISTS (
                SELECT 1 FROM administracion.soporte_reasignaciones r WHERE r.id_asignacion = a.id
              ) THEN (
@@ -1369,10 +1401,12 @@ export class PostgresSoporteRepository implements SoporteRepositoryPort {
 
       const prioridadFinal = normalizarPrioridad(prioridad || asignacion.prioridad);
 
-      // 3. Cerramos la asignación anterior y guardamos su tiempo.
+      // 3. Cerramos la asignación anterior y guardamos su tiempo y ubicación.
       await queryRunner.query(
         `UPDATE administracion.soporte_asignaciones
-         SET estado = 'DERIVADA', fecha_fin = CURRENT_TIMESTAMP
+         SET estado = 'DERIVADA',
+             fecha_fin = CURRENT_TIMESTAMP,
+             fecha_llegada = CASE WHEN fecha_en_camino IS NOT NULL THEN COALESCE(fecha_llegada, CURRENT_TIMESTAMP) ELSE fecha_llegada END
          WHERE id = $1`,
         [asignacion.id]
       );

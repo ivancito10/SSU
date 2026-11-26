@@ -6,14 +6,18 @@ use App\Services\EnfermeriaNestService;
 use Illuminate\Support\Collection;
 use PowerComponents\LivewirePowerGrid\Button;
 use PowerComponents\LivewirePowerGrid\Column;
+use PowerComponents\LivewirePowerGrid\Exportable;
 use PowerComponents\LivewirePowerGrid\Footer;
 use PowerComponents\LivewirePowerGrid\Header;
 use PowerComponents\LivewirePowerGrid\PowerGrid;
 use PowerComponents\LivewirePowerGrid\PowerGridFields;
 use PowerComponents\LivewirePowerGrid\PowerGridComponent;
+use PowerComponents\LivewirePowerGrid\Traits\WithExport;
 
 final class SelectPacienteTable extends PowerGridComponent
 {
+    use WithExport;
+
     public string $tableName = 'SelectPacienteTable';
     public string $primaryKey = 'id';
     public string $sortField = 'id';
@@ -22,10 +26,13 @@ final class SelectPacienteTable extends PowerGridComponent
     public function setUp(): array
     {
         return [
+            Exportable::make('export')
+                ->striped()
+                ->type(Exportable::TYPE_XLS, Exportable::TYPE_CSV),
             Header::make()
                 ->showSearchInput(),
             Footer::make()
-                ->showPerPage(perPage: 5, perPageValues: [5, 10, 25, 50])
+                ->showPerPage()
                 ->showRecordCount(),
         ];
     }
@@ -81,37 +88,41 @@ final class SelectPacienteTable extends PowerGridComponent
     public function columns(): array
     {
         return [
-            Column::make('#', 'id')->index()
-                ->headerAttribute('text-center', 'font-size:13px; background-color: #2471a3; color:white;')
-                ->bodyAttribute('text-center'),
+            Column::make('#', 'id')
+                ->index()
+                ->headerAttribute('text-center', 'font-size:15px; background-color:#2471a3 ; color:white;')
+                ->bodyAttribute('text-center')
+                ->sortable()
+                ->searchable(),
 
             Column::make('C.I.', 'ci')
-                ->searchable()
+                ->headerAttribute('text-center', 'font-size:15px; background-color:#2471a3 ; color:white;')
+                ->bodyAttribute('text-center')
                 ->sortable()
-                ->headerAttribute('text-center', 'font-size:13px; background-color: #2471a3; color:white;')
-                ->bodyAttribute('text-center'),
+                ->searchable(),
 
             Column::make('MATRÍCULA', 'matricula')
-                ->searchable()
+                ->headerAttribute('text-center', 'font-size:15px; background-color:#2471a3 ; color:white;')
+                ->bodyAttribute('text-center')
                 ->sortable()
-                ->headerAttribute('text-center', 'font-size:13px; background-color: #2471a3; color:white;')
-                ->bodyAttribute('text-center'),
+                ->searchable(),
 
             Column::make('NOMBRE COMPLETO', 'nombreCompleto')
-                ->searchable()
+                ->headerAttribute('text-center', 'font-size:15px; background-color:#2471a3 ; color:white;')
+                ->bodyAttribute('text-left')
                 ->sortable()
-                ->headerAttribute('text-center', 'font-size:13px; background-color: #2471a3; color:white;')
-                ->bodyAttribute('text-left'),
+                ->searchable(),
 
             Column::make('TIPO ASEGURADO', 'tipoAsegurado')
-                ->searchable()
+                ->headerAttribute('text-center', 'font-size:15px; background-color:#2471a3 ; color:white;')
+                ->bodyAttribute('text-left')
                 ->sortable()
-                ->headerAttribute('text-center', 'font-size:13px; background-color: #2471a3; color:white;')
-                ->bodyAttribute('text-center'),
+                ->searchable(),
 
             Column::action('OPCIONES')
-                ->headerAttribute('text-center', 'font-size:13px; background-color: #2471a3; color:white;')
-                ->bodyAttribute('text-center'),
+                ->headerAttribute('text-center', 'font-size:15px; background-color:#2471a3 ; color:white;')
+                ->bodyAttribute('text-center')
+                ->sortable(),
         ];
     }
 
@@ -124,9 +135,11 @@ final class SelectPacienteTable extends PowerGridComponent
 
         return [
             Button::add('seleccionar')
-                ->slot('<i class="fas fa-check-circle text-success" style="font-size: 17px;"></i>')
-                ->class('btn btn-sm btn-outline-success')
-                ->tooltip('Seleccionar Paciente')
+                ->slot('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-check-circle-fill" viewBox="0 0 16 16">
+                        <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0m-3.97-3.03a.75.75 0 0 0-1.08.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-.01-1.05z"/>
+                        </svg>')
+                ->class('btn btn-green')
+                ->tooltip('SELECCIONAR')
                 ->dispatch('pacienteSeleccionado', [
                     'id'              => $idPersona,
                     'nombre_completo' => $nombreCompleto,

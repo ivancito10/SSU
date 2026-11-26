@@ -9,3 +9,7 @@ Route::get('enfermeria/inyectables/index', function () {
 Route::get('enfermeria/inyectables/create', function () {
     return view('Enfermeria.Inyectables.create');
 })->name('enfermeria.inyectables.create')->middleware(['auth']);
+
+Route::get('enfermeria/inyectables/edit/{id}', function ($id) {
+    return view('Enfermeria.Inyectables.create', ['id' => $id]);
+})->name('enfermeria.inyectables.edit')->middleware(['auth']);

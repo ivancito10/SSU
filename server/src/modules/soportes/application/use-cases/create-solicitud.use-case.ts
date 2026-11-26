@@ -18,25 +18,27 @@ export class CreateSolicitudUseCase {
     // CORRECCIÓN 3: Renombrar a crearSolicitudTransaccional
     const nuevaSolicitud = await this.soporteRepository.crearSolicitudTransaccional(idUsuario, dto);
 
-    // 4. Enviar Notificación Push + Campanita a los Operadores activos
-    try {
-      const idsOperadores = await this.soporteRepository.obtenerIdsOperadoresActivos();
-      if (idsOperadores && idsOperadores.length > 0) {
-        const ubicacionTexto = [dto.oficina, dto.consultorio, dto.piso].filter(Boolean).join(' — ') || 'ubicación registrada';
-        await this.notificationService.enviarNotificacion(
-          idsOperadores,
-          'Nueva Solicitud de Soporte',
-          `Se registró el ticket ${nuevaSolicitud.codigoTicket || `#${nuevaSolicitud.id}`} en ${ubicacionTexto}.`,
-          {
-            idSolicitud: String(nuevaSolicitud.id ?? ''),
-            codigoTicket: String(nuevaSolicitud.codigoTicket ?? ''),
-            tipoNotificacion: 'NUEVA_SOLICITUD_OPERADOR',
-          }
-        );
+    // 4. Enviar Notificación Push + Campanita en segundo plano sin bloquear la respuesta HTTP
+    const ubicacionTexto = [dto.oficina, dto.consultorio, dto.piso].filter(Boolean).join(' — ') || 'ubicación registrada';
+    void (async () => {
+      try {
+        const idsOperadores = await this.soporteRepository.obtenerIdsOperadoresActivos();
+        if (idsOperadores && idsOperadores.length > 0) {
+          await this.notificationService.enviarNotificacion(
+            idsOperadores,
+            'Nueva Solicitud de Soporte',
+            `Se registró el ticket ${nuevaSolicitud.codigoTicket || `#${nuevaSolicitud.id}`} en ${ubicacionTexto}.`,
+            {
+              idSolicitud: String(nuevaSolicitud.id ?? ''),
+              codigoTicket: String(nuevaSolicitud.codigoTicket ?? ''),
+              tipoNotificacion: 'NUEVA_SOLICITUD_OPERADOR',
+            }
+          );
+        }
+      } catch (error) {
+        console.warn('La solicitud se guardó, pero falló la notificación en segundo plano:', error);
       }
-    } catch (error) {
-      console.error('La solicitud se guardó, pero falló la notificación:', error);
-    }
+    })();
 
     return nuevaSolicitud;
   }

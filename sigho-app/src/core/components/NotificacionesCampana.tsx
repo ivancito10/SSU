@@ -5,6 +5,7 @@ import {
     Modal,
     PanResponder,
     Platform,
+    Pressable,
     ScrollView,
     StyleSheet,
     Text,
@@ -30,6 +31,14 @@ const fechaLegible = (valor: string) => {
     const fecha = new Date(valor);
     if (Number.isNaN(fecha.getTime())) return '';
     return fecha.toLocaleString('es-BO', { dateStyle: 'short', timeStyle: 'short' });
+};
+
+// Evita que múltiples instancias montadas de NotificacionesCampana en el stack
+// apilen varios toasts idénticos uno encima del otro en Web.
+let ultimoToastIdMostradoGlobal: number | null = null;
+const listenersCerrarAvisoWeb = new Set<() => void>();
+const notificarCierreAvisoWebGlobal = () => {
+    listenersCerrarAvisoWeb.forEach((fn) => fn());
 };
 
 interface TarjetaNotificacionProps {
@@ -145,7 +154,9 @@ export const NotificacionesCampana = ({
             const nuevas = await obtenerNotificaciones();
             if (inicializadoRef.current && Platform.OS === 'web') {
                 const reciente = nuevas.find((item) => !idsPreviosRef.current.has(Number(item.id)) && !item.leida);
-                if (reciente) {
+                if (reciente && Number(reciente.id) !== ultimoToastIdMostradoGlobal) {
+                    ultimoToastIdMostradoGlobal = Number(reciente.id);
+                    notificarCierreAvisoWebGlobal();
                     setAvisoWeb(reciente);
                     if (timerAvisoRef.current) clearTimeout(timerAvisoRef.current);
                     timerAvisoRef.current = setTimeout(() => setAvisoWeb(null), 7000);
@@ -163,9 +174,18 @@ export const NotificacionesCampana = ({
     }, []);
 
     useEffect(() => {
+        const limpiarLocal = () => {
+            if (timerAvisoRef.current) {
+                clearTimeout(timerAvisoRef.current);
+                timerAvisoRef.current = null;
+            }
+            setAvisoWeb(null);
+        };
+        listenersCerrarAvisoWeb.add(limpiarLocal);
         void cargar();
         const intervalo = setInterval(() => void cargar(), 8000);
         return () => {
+            listenersCerrarAvisoWeb.delete(limpiarLocal);
             clearInterval(intervalo);
             if (timerAvisoRef.current) clearTimeout(timerAvisoRef.current);
         };
@@ -210,6 +230,10 @@ export const NotificacionesCampana = ({
         }
     };
 
+    const cerrarAvisoWeb = useCallback(() => {
+        notificarCierreAvisoWebGlobal();
+    }, []);
+
     return (
         <>
             <TouchableOpacity
@@ -228,14 +252,22 @@ export const NotificacionesCampana = ({
             </TouchableOpacity>
 
             {Platform.OS === 'web' && avisoWeb && (
-                <Modal transparent visible animationType="fade" onRequestClose={() => setAvisoWeb(null)}>
-                    <View style={styles.toastOverlay} pointerEvents="box-none">
-                        <TouchableOpacity style={styles.avisoWeb} onPress={() => { setVisible(true); setAvisoWeb(null); }} activeOpacity={0.9}>
+                <Modal transparent visible animationType="fade" onRequestClose={cerrarAvisoWeb}>
+                    <Pressable style={styles.toastOverlay} onPress={cerrarAvisoWeb}>
+                        <TouchableOpacity
+                            style={styles.avisoWeb}
+                            onPress={(e) => {
+                                e?.stopPropagation?.();
+                                cerrarAvisoWeb();
+                                setVisible(true);
+                            }}
+                            activeOpacity={0.9}
+                        >
                             <Text style={styles.avisoTitulo} numberOfLines={1}>{avisoWeb.titulo}</Text>
                             <Text style={styles.avisoMensaje} numberOfLines={2}>{avisoWeb.mensaje}</Text>
                             <Text style={styles.avisoAccion}>Ver notificaciones</Text>
                         </TouchableOpacity>
-                    </View>
+                    </Pressable>
                 </Modal>
             )}
 

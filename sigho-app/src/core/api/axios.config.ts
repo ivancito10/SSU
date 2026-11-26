@@ -2,14 +2,22 @@ import axios from 'axios';
 import { Platform } from 'react-native';
 import { obtenerItem, eliminarItem } from '../utils/storage';
 
-const IP_LOCAL = '192.168.2.151';
-//const IP_LOCAL = '192.168.100.108';
+// Si existe una variable de entorno configurada (para producción), la usa; 
+// si no, usa la IP de desarrollo local:
+const API_URL_PROD = process.env.EXPO_PUBLIC_API_URL;
+const IP_LOCAL_DEV = '192.168.2.151';
 
 const obtenerBaseUrl = () => {
+    // 1. Si hay URL de producción (Android, iOS, Web o .exe), tiene prioridad:
+    if (API_URL_PROD) {
+        return API_URL_PROD;
+    }
+    // 2. Desarrollo local en Web:
     if (Platform.OS === 'web' && typeof window !== 'undefined' && window.location?.hostname) {
         return `http://${window.location.hostname}:3000/api`;
     }
-    return `http://${IP_LOCAL}:3000/api`;
+    // 3. Desarrollo local en móvil:
+    return `http://${IP_LOCAL_DEV}:3000/api`;
 };
 
 export const api = axios.create({

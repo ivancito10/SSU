@@ -129,6 +129,10 @@ export class PostgresPacienteRepository implements PacienteRepositoryPort {
       persona.afiliado ?? true,
       institucionPrincipal,
       instituciones,
+      persona.pApellido || '',
+      persona.sApellido || '',
+      persona.nombres || '',
+      persona.idTipoAsegurado ?? null,
     );
   }
   // =========================================================================

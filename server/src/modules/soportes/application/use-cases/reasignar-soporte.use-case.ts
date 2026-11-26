@@ -24,8 +24,8 @@ export class ReasignarSoporteUseCase {
     
     const resultado = await this.soporteRepo.reasignarSoporteTransaccional(idAsignacion, idDeSoporte, dto, 'TECNICO');
 
-    try {
-      await this.notificationService.enviarNotificacion(
+    void this.notificationService
+      .enviarNotificacion(
         Number(dto.id_a_soporte),
         'Soporte derivado',
         `Te derivaron el ticket ${resultado.codigoTicket || `#${resultado.idSolicitud}`}. Cambia al modo TÉCNICO para atenderlo.`,
@@ -36,10 +36,10 @@ export class ReasignarSoporteUseCase {
           rolDestino: 'TECNICO',
           tipoNotificacion: 'ASIGNACION_TECNICO',
         },
-      );
-    } catch (error) {
-      console.error('Derivación completada, pero no se pudo enviar el aviso al técnico:', error);
-    }
+      )
+      .catch((error) => {
+        console.warn('Derivación completada, pero falló la notificación en segundo plano:', error);
+      });
 
     return {
       exito: true,

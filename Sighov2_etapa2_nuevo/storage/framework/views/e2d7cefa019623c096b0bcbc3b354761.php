@@ -33,6 +33,12 @@ if (isset($__slots)) unset($__slots);
                     text: "La atención de enfermería se registró exitosamente.",
                     icon: "success"
                 });
+            } else if (evento === 'InyeccionActualizada') {
+                Swal.fire({
+                    title: "¡Actualizado!",
+                    text: "La atención de enfermería se actualizó exitosamente.",
+                    icon: "success"
+                });
             } else if (evento === 'InyeccionCancelada') {
                 Swal.fire({
                     title: "Cancelado",

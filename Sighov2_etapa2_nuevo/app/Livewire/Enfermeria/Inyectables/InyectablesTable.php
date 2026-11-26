@@ -34,9 +34,6 @@ final class InyectablesTable extends PowerGridComponent
     public function setUp(): array
     {
         return [
-            Exportable::make('export')
-                ->striped()
-                ->type(Exportable::TYPE_XLS, Exportable::TYPE_CSV),
             Header::make()
                 ->showSearchInput(),
             Footer::make()
@@ -48,7 +45,7 @@ final class InyectablesTable extends PowerGridComponent
     public function datasource(): Builder
     {
         $query = RegistroInyeccion::query()
-            ->with(['receta'])
+            ->with(['receta', 'recetaManual'])
             ->latest('id');
 
         if (!empty($this->search)) {
@@ -80,7 +77,9 @@ final class InyectablesTable extends PowerGridComponent
                     });
                     
                     // O busca por receta manual
-                    $q->orWhereRaw('id_receta_manual::text ILIKE ?', ["%{$busqueda}%"]);
+                    $q->orWhereHas('recetaManual', function ($qRecManual) use ($busqueda) {
+                        $qRecManual->whereRaw('numero_receta::text ILIKE ?', ["%{$busqueda}%"]);
+                    });
                     
                 } else {
                     // Si NO se encontraron pacientes, buscamos únicamente por los números de receta
@@ -88,7 +87,9 @@ final class InyectablesTable extends PowerGridComponent
                         $qReceta->whereRaw('nro_receta::text ILIKE ?', ["%{$busqueda}%"]);
                     });
                     
-                    $q->orWhereRaw('id_receta_manual::text ILIKE ?', ["%{$busqueda}%"]);
+                    $q->orWhereHas('recetaManual', function ($qRecManual) use ($busqueda) {
+                        $qRecManual->whereRaw('numero_receta::text ILIKE ?', ["%{$busqueda}%"]);
+                    });
                 }
             });
         }
@@ -241,15 +242,17 @@ final class InyectablesTable extends PowerGridComponent
             ->tooltip('VER ATENCIÓN')
             ->dispatch('verInyeccion', ['id' => $row->id]);
 
-        // Botón Editar
-        /* $botones[] = Button::add('editar')
-            ->slot('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-pencil-square" viewBox="0 0 16 16">
-                        <path d="M15.502 1.94a.5.5 0 0 1 0 .706L14.459 3.69l-2-2L13.502.646a.5.5 0 0 1 .707 0l1.293 1.293zm-1.75 2.456-2-2L4.939 9.21a.5.5 0 0 0-.121.196l-.805 2.414a.25.25 0 0 0 .316.316l2.414-.805a.5.5 0 0 0 .196-.12l6.813-6.814z"/>
-                        <path fill-rule="evenodd" d="M1 13.5A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-6a.5.5 0 0 0-1 0v6a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5H9a.5.5 0 0 0 0-1H2.5A1.5 1.5 0 0 0 1 2.5z"/>
+        // Botón Editar (solo si el registro está activo)
+        if ($row->estado) {
+            $botones[] = Button::add('editar')
+                ->slot('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-pencil-square" viewBox="0 0 16 16">
+                            <path d="M15.502 1.94a.5.5 0 0 1 0 .706L14.459 3.69l-2-2L13.502.646a.5.5 0 0 1 .707 0l1.293 1.293zm-1.75 2.456-2-2L4.939 9.21a.5.5 0 0 0-.121.196l-.805 2.414a.25.25 0 0 0 .316.316l2.414-.805a.5.5 0 0 0 .196-.12l6.813-6.814z"/>
+                            <path fill-rule="evenodd" d="M1 13.5A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-6a.5.5 0 0 0-1 0v6a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5H9a.5.5 0 0 0 0-1H2.5A1.5 1.5 0 0 0 1 2.5z"/>
                         </svg>')
-            ->class('btn btn-sm btn-outline-warning mr-1')
-            ->tooltip('EDITAR ATENCIÓN')
-            ->dispatch('editarInyeccion', ['id' => $row->id]); */
+                ->class('btn btn-orange')
+                ->tooltip('EDITAR ATENCIÓN')
+                ->dispatch('editarInyeccion', ['id' => $row->id]);
+        }
 
         // Botón Anular / Habilitar según el estado
         if ($row->estado) {
@@ -257,7 +260,7 @@ final class InyectablesTable extends PowerGridComponent
                 ->slot('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-x-lg" viewBox="0 0 16 16">
                     <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"/>
                     </svg>')
-                ->class('btn btn-sm btn-outline-danger')
+                ->class('btn btn-red')
                 ->tooltip('ANULAR ATENCIÓN')
                 ->dispatch('cambiarEstadoInyeccion', ['id' => $row->id]);
         } else {

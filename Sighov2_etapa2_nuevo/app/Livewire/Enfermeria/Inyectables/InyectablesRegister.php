@@ -96,11 +96,287 @@ class InyectablesRegister extends Component
     public array $medicamentosFiltrados = [];
     public bool $mostrarDropdownMedicamentos = false;
     public string $numeroRecetaManual = ''; 
-    
 
-    public function mount()
+    // --- MODO EDICIÓN ---
+    public ?int $idRegistroEditar = null;
+    public ?int $idRecetaManualEditar = null;
+    public bool $modoEdicion = false;
+
+    public function mount($id = null)
     {
-            $this->fechaEmisionManual = null;
+        $this->fechaEmisionManual = null;
+        if (!empty($id)) {
+            $this->cargarParaEdicion((int) $id);
+        }
+    }
+
+    public function updatedNumeroRecetaManual(): void
+    {
+        if ($this->tipoReceta === 'MANUAL' && !empty($this->inyeccionesIngresados)) {
+            $nuevoNro = trim($this->numeroRecetaManual) !== '' ? trim($this->numeroRecetaManual) : 'S/N';
+            foreach ($this->inyeccionesIngresados as $idx => $item) {
+                $this->inyeccionesIngresados[$idx]['nro_receta'] = $nuevoNro;
+            }
+        }
+    }
+
+    protected function cargarParaEdicion(int $idRegistro): void
+    {
+        $registro = RegistroInyeccion::with([
+            'receta',
+            'recetaManual',
+            'medicamentos.medicamento',
+            'procedimiento',
+            'viaParenteral',
+        ])->find($idRegistro);
+
+        if (!$registro) {
+            return;
+        }
+
+        $this->modoEdicion      = true;
+        $this->idRegistroEditar = $registro->id;
+        $this->idPersona        = (int) $registro->id_persona;
+        $this->idEspecialista   = $registro->id_especialista ? (int) $registro->id_especialista : null;
+
+        // 1. Resolver datos del paciente desde NestJS (Fase 1)
+        $this->nombreCompletoPaciente = "ASEGURADO SSU #{$registro->id_persona}";
+        $this->matriculaPaciente      = 'S/M';
+        $this->ciPaciente             = 'S/C';
+
+        try {
+            $nestService = app(EnfermeriaNestService::class);
+            $dataP = $nestService->obtenerPacientePorId((int) $registro->id_persona);
+            if (!empty($dataP) && is_array($dataP)) {
+                $this->nombreCompletoPaciente = trim($dataP['nombreCompleto'] ?? $dataP['nombre_completo'] ?? $this->nombreCompletoPaciente);
+                $this->ciPaciente             = !empty($dataP['ci']) ? trim((string) $dataP['ci']) : 'S/C';
+                $this->matriculaPaciente      = !empty($dataP['matricula']) ? trim((string) $dataP['matricula']) : 'S/M';
+            }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning("Error NestJS al cargar paciente en edición {$registro->id_persona}: " . $e->getMessage());
+        }
+
+        // 2. Cargar catálogo de vías parenterales para mapear por nombre desde la observación
+        $viasMap = ViaParenteral::all()->keyBy(fn ($v) => mb_strtolower(trim($v->nombre)));
+        $viaDefault = $registro->viaParenteral ?: ViaParenteral::find($registro->id_via_parenteral);
+
+        // 3. Cargar según sea Receta de Sistema o Receta Manual
+        if (!empty($registro->id_receta)) {
+            $this->tipoReceta = 'SISTEMA';
+            $receta = $registro->receta ?: Receta::find($registro->id_receta);
+            $nroRecetaLimpio = $receta
+                ? ltrim(trim((string) $receta->nro_receta), '0')
+                : (string) $registro->id_receta;
+
+            $this->nroRecetaBusqueda       = $nroRecetaLimpio;
+            $this->recetaSistemaEncontrada = $receta ? $receta->toArray() : ['id' => $registro->id_receta];
+
+            $detallesReceta = RecetaMedicamento::where('id_receta', $registro->id_receta)->get();
+            $idsDetallesUsados = [];
+
+            foreach ($registro->medicamentos as $regMed) {
+                $medObj = $regMed->medicamento ?: Medicamento::find($regMed->id_medicamento);
+                [$nombreViaParsed, $nroRecParsed] = $this->extraerViaYRecetaDeObservacion(
+                    (string) $regMed->observacion,
+                    $viaDefault ? $viaDefault->nombre : 'Intramuscular',
+                    $nroRecetaLimpio
+                );
+                $viaEncontrada = $viasMap->get(mb_strtolower(trim($nombreViaParsed)));
+                $idVia = $viaEncontrada ? (int) $viaEncontrada->id : (int) ($registro->id_via_parenteral ?: 1);
+
+                // Buscar el detalle correspondiente en la receta del sistema
+                $detMatch = $detallesReceta->first(function ($d) use ($regMed, $idsDetallesUsados) {
+                    return (int) $d->id_medicamento === (int) $regMed->id_medicamento
+                        && !in_array($d->id, $idsDetallesUsados);
+                });
+
+                if ($detMatch) {
+                    $idsDetallesUsados[] = $detMatch->id;
+                }
+
+                $itemOriginal = $detMatch ? [
+                    'id_detalle'        => $detMatch->id,
+                    'id_medicamento'    => (int) $regMed->id_medicamento,
+                    'codigo'            => $medObj->codigo_medicamento ?? '',
+                    'nombre'            => $medObj->nombre ?? 'Medicamento Inyectable',
+                    'cantidad'          => $detMatch->cantidad ?? 1,
+                    'via_sugerida'      => $detMatch->forma_adm ?? '',
+                    'id_via_parenteral' => '',
+                ] : [
+                    'id_detalle'        => null,
+                    'id_medicamento'    => (int) $regMed->id_medicamento,
+                    'codigo'            => $medObj->codigo_medicamento ?? '',
+                    'nombre'            => $medObj->nombre ?? 'Medicamento Inyectable',
+                    'cantidad'          => 1,
+                    'via_sugerida'      => '',
+                    'id_via_parenteral' => '',
+                ];
+
+                $this->inyeccionesIngresados[] = [
+                    'nro_receta'            => $nroRecParsed ?: $nroRecetaLimpio,
+                    'id_receta'             => (int) $registro->id_receta,
+                    'id_receta_manual'      => null,
+                    'id_medicamento'        => (int) $regMed->id_medicamento,
+                    'medicamento_nombre'    => $medObj ? $medObj->nombre : 'Medicamento Inyectable',
+                    'codigo_medicamento'    => $medObj ? ($medObj->codigo_medicamento ?? '') : '',
+                    'id_via_parenteral'     => $idVia,
+                    'via_parenteral_nombre' => $viaEncontrada ? $viaEncontrada->nombre : $nombreViaParsed,
+                    'cantidad'              => (int) ($itemOriginal['cantidad'] ?? 1),
+                    'id_persona'            => (int) $this->idPersona,
+                    'id_especialista'       => $this->idEspecialista,
+                    'item_receta_original'  => $itemOriginal,
+                ];
+            }
+
+            // Cargar en la tabla superior SOLO las inyecciones de la receta que NO fueron registradas aún
+            $inyectablesPendientes = [];
+            foreach ($detallesReceta as $det) {
+                if (in_array($det->id, $idsDetallesUsados)) {
+                    continue;
+                }
+                $med = Medicamento::where('id', $det->id_medicamento)
+                    ->where(function ($q) {
+                        $q->where('forma_farmaceutica', 'ILIKE', '%Inyectable%')
+                          ->orWhere('nombre', 'ILIKE', '%Inyectable%');
+                    })
+                    ->first();
+
+                if (!$med) {
+                    continue;
+                }
+
+                $inyectablesPendientes[] = [
+                    'id_detalle'        => $det->id,
+                    'id_medicamento'    => $det->id_medicamento,
+                    'codigo'            => $med->codigo_medicamento ?? '',
+                    'nombre'            => $med->nombre ?? 'Medicamento Inyectable',
+                    'cantidad'          => $det->cantidad ?? 1,
+                    'via_sugerida'      => $det->forma_adm ?? '',
+                    'id_via_parenteral' => '',
+                ];
+            }
+            $this->medicamentosRecetaSistema = $inyectablesPendientes;
+        } else {
+            // MODO RECETA MANUAL
+            $this->tipoReceta = 'MANUAL';
+            $recManual = $registro->recetaManual ?: ($registro->id_receta_manual ? RecetaManual::find($registro->id_receta_manual) : null);
+
+            $this->idRecetaManualEditar = $recManual ? $recManual->id : $registro->id_receta_manual;
+            $this->numeroRecetaManual   = $recManual ? (string) ($recManual->numero_receta ?? '') : '';
+            $this->fechaEmisionManual   = ($recManual && $recManual->fecha_receta)
+                ? $recManual->fecha_receta->format('Y-m-d')
+                : optional($registro->created_at)->format('Y-m-d');
+            $this->idEspecialista       = (int) ($recManual->id_especialista ?? $registro->id_especialista ?? 0) ?: null;
+
+            // Resolver nombre del médico solicitante desde NestJS
+            if ($this->idEspecialista) {
+                try {
+                    $espData = app(EnfermeriaNestService::class)->obtenerEspecialistaPorId($this->idEspecialista);
+                    if (!empty($espData) && is_array($espData)) {
+                        $nomEsp = $espData['nombreCompleto'] ?? $espData['nombre'] ?? "ESPECIALISTA #{$this->idEspecialista}";
+                        $espRaw = $espData['especialidad'] ?? null;
+                        $espNom = is_array($espRaw) ? ($espRaw['nombre'] ?? '') : (is_string($espRaw) ? $espRaw : '');
+                        $this->seleccionarEspecialista($this->idEspecialista, (string) $nomEsp, (string) $espNom);
+                    } else {
+                        $this->nombreEspecialistaSeleccionado = "ESPECIALISTA #{$this->idEspecialista}";
+                    }
+                } catch (\Throwable $e) {
+                    $this->nombreEspecialistaSeleccionado = "ESPECIALISTA #{$this->idEspecialista}";
+                }
+            }
+
+            foreach ($registro->medicamentos as $regMed) {
+                $medObj = $regMed->medicamento ?: Medicamento::find($regMed->id_medicamento);
+                [$nombreViaParsed, $nroRecParsed] = $this->extraerViaYRecetaDeObservacion(
+                    (string) $regMed->observacion,
+                    $viaDefault ? $viaDefault->nombre : 'Intramuscular',
+                    $this->numeroRecetaManual ?: 'S/N'
+                );
+                $viaEncontrada = $viasMap->get(mb_strtolower(trim($nombreViaParsed)));
+                $idVia = $viaEncontrada ? (int) $viaEncontrada->id : (int) ($registro->id_via_parenteral ?: 1);
+
+                if ($this->numeroRecetaManual === '' && $nroRecParsed && $nroRecParsed !== 'S/N') {
+                    $this->numeroRecetaManual = $nroRecParsed;
+                }
+
+                $this->inyeccionesIngresados[] = [
+                    'id_receta'             => null,
+                    'nro_receta'            => $this->numeroRecetaManual ?: ($nroRecParsed ?: 'S/N'),
+                    'id_medicamento'        => (int) $regMed->id_medicamento,
+                    'codigo_medicamento'    => $medObj ? ($medObj->codigo_medicamento ?? '') : '',
+                    'medicamento_nombre'    => $medObj ? $medObj->nombre : 'Inyectable',
+                    'id_via_parenteral'     => $idVia,
+                    'via_parenteral_nombre' => $viaEncontrada ? $viaEncontrada->nombre : $nombreViaParsed,
+                    'es_manual'             => true,
+                    'cantidad'              => 1,
+                ];
+            }
+        }
+
+        // 4. Cargar checklist de procedimientos complementarios
+        if ($proc = $registro->procedimiento) {
+            $this->curacion_plana      = (bool) $proc->curacion_plana;
+            $this->curacion_infectada  = (bool) $proc->curacion_infectada;
+            $this->oxigenoterapia      = (bool) $proc->oxigenoterapia;
+            $this->retiro_puntos       = (bool) $proc->retiro_puntos;
+            $this->prueba_sensibilidad = (bool) $proc->prueba_sensibilidad;
+            $this->sangria             = (bool) $proc->sangria;
+            $this->signos_vitales      = (bool) $proc->signos_vitales;
+            $this->tx_vo               = (bool) $proc->tx_vo;
+            $this->orientacion_salud   = (bool) $proc->orientacion_salud;
+            $this->vendajes            = (bool) $proc->vendajes;
+            $this->nebulizacion        = (bool) $proc->nebulizacion;
+            $this->otros               = !empty($proc->otros);
+            $this->obs_otros           = (string) ($proc->otros ?? '');
+
+            $this->cargarObservacionesProcedimientos((string) ($proc->observaciones ?? ''));
+        }
+    }
+
+    private function extraerViaYRecetaDeObservacion(string $observacion, string $viaFallback, string $recetaFallback): array
+    {
+        $via = $viaFallback;
+        $receta = $recetaFallback;
+
+        if (preg_match('/Vía:\s*([^|]+)/i', $observacion, $mVia)) {
+            $via = trim($mVia[1]);
+        }
+        if (preg_match('/Receta:\s*(.+)$/i', $observacion, $mRec)) {
+            $receta = trim($mRec[1]);
+        }
+
+        return [$via, $receta];
+    }
+
+    private function cargarObservacionesProcedimientos(string $observaciones): void
+    {
+        if (trim($observaciones) === '') {
+            return;
+        }
+        $mapa = [
+            'Curación plana'      => 'obs_curacion_plana',
+            'Curación infectada'  => 'obs_curacion_infectada',
+            'Oxigenoterapia'      => 'obs_oxigenoterapia',
+            'Retiro puntos'       => 'obs_retiro_puntos',
+            'Prueba sensibilidad' => 'obs_prueba_sensibilidad',
+            'Sangría'             => 'obs_sangria',
+            'Signos vitales'      => 'obs_signos_vitales',
+            'Tx VO'               => 'obs_tx_vo',
+            'Orientación salud'   => 'obs_orientacion_salud',
+            'Vendajes'            => 'obs_vendajes',
+            'Nebulización'        => 'obs_nebulizacion',
+        ];
+        foreach (explode('|', $observaciones) as $segmento) {
+            $partes = explode(':', $segmento, 2);
+            if (count($partes) === 2) {
+                $etiqueta = trim($partes[0]);
+                $valor    = trim($partes[1]);
+                if (isset($mapa[$etiqueta])) {
+                    $prop = $mapa[$etiqueta];
+                    $this->{$prop} = $valor;
+                }
+            }
+        }
     }
 
         // Se dispara cuando la enfermera teclea en el input
@@ -227,14 +503,17 @@ class InyectablesRegister extends Component
 
         $termino = $this->nroRecetaBusqueda;
 
-        // 1. LIMPIAR DATOS ANTERIORES POR SEGURIDAD ANTES DE BUSCAR
-        $this->nombreCompletoPaciente    = '';
-        $this->matriculaPaciente         = '';
-        $this->ciPaciente                = '';
-        $this->idPersona                 = null;
-        $this->idEspecialista            = null;
+        // 1. LIMPIAR TABLA DE RESULTADOS DE BÚSQUEDA ANTERIOR
         $this->recetaSistemaEncontrada   = [];
         $this->medicamentosRecetaSistema = [];
+
+        if (empty($this->inyeccionesIngresados)) {
+            $this->nombreCompletoPaciente = '';
+            $this->matriculaPaciente      = '';
+            $this->ciPaciente             = '';
+            $this->idPersona              = null;
+            $this->idEspecialista         = null;
+        }
 
         try {
             // 2. Buscar comparando solo los dígitos después de los ceros a la izquierda (ej: BD '01589' == '1589')
@@ -266,39 +545,22 @@ class InyectablesRegister extends Component
             $this->idPersona = $receta->id_persona;
             $this->idEspecialista = $receta->id_especialista;
 
-            // 3. Obtener paciente con Eloquent (o microservicio de respaldo)
-            $persona = \App\Models\Administracion\Persona::find($receta->id_persona);
+            // 3. Obtener paciente exclusivamente desde el microservicio NestJS (Etapa 1)
+            $this->nombreCompletoPaciente = "ASEGURADO SSU #{$receta->id_persona}";
+            $this->matriculaPaciente      = 'S/M';
+            $this->ciPaciente             = 'S/C';
 
-            if ($persona) {
-                $paterno  = $persona->p_apellido ?? '';
-                $materno  = $persona->s_apellido ?? '';
-                $nombres  = $persona->nombres ?? '';
-                $this->nombreCompletoPaciente = trim("{$paterno} {$materno} {$nombres}");
-                $this->ciPaciente             = $persona->ci ?? '';
-                $this->matriculaPaciente      = $persona->matricula_seguro ?? 'S/M';
-            } else {
-                try {
-                    $token = session('access_token', session('token', ''));
-                    $baseUrl = config('services.nestjs.url', 'http://127.0.0.1:3000/api');
-                    $res = \Illuminate\Support\Facades\Http::withToken($token)
-                        ->timeout(3)
-                        ->get("{$baseUrl}/pacientes/{$receta->id_persona}");
+            try {
+                $nestService = app(EnfermeriaNestService::class);
+                $dataP = $nestService->obtenerPacientePorId((int) $receta->id_persona);
 
-                    if ($res->successful() && !empty($res->json())) {
-                        $dataP = $res->json();
-                        $this->nombreCompletoPaciente = $dataP['nombreCompleto'] ?? $dataP['nombre_completo'] ?? "ASEGURADO #{$receta->id_persona}";
-                        $this->ciPaciente             = $dataP['ci'] ?? '';
-                        $this->matriculaPaciente      = $dataP['matricula'] ?? 'S/M';
-                    } else {
-                        $this->nombreCompletoPaciente = "ASEGURADO SSU #{$receta->id_persona}";
-                        $this->matriculaPaciente      = 'S/M';
-                        $this->ciPaciente             = '';
-                    }
-                } catch (\Throwable $e) {
-                    $this->nombreCompletoPaciente = "ASEGURADO SSU #{$receta->id_persona}";
-                    $this->matriculaPaciente      = 'S/M';
-                    $this->ciPaciente             = '';
+                if (!empty($dataP) && is_array($dataP)) {
+                    $this->nombreCompletoPaciente = trim($dataP['nombreCompleto'] ?? $dataP['nombre_completo'] ?? "ASEGURADO SSU #{$receta->id_persona}");
+                    $this->ciPaciente             = !empty($dataP['ci']) ? trim((string) $dataP['ci']) : 'S/C';
+                    $this->matriculaPaciente      = !empty($dataP['matricula']) ? trim((string) $dataP['matricula']) : 'S/M';
                 }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Error NestJS al obtener paciente {$receta->id_persona}: " . $e->getMessage());
             }
 
             // 4. Consultar los detalles de medicamentos de la receta
@@ -344,8 +606,8 @@ class InyectablesRegister extends Component
                     'codigo'            => $med->codigo_medicamento ?? '',
                     'nombre'            => $med->nombre ?? 'Medicamento Inyectable',
                     'cantidad'          => $det->cantidad ?? 1,
-                    'via_sugerida'      => $det->forma_adm ?? 'Intramuscular',
-                    'id_via_parenteral' => 1, // Por defecto Intramuscular
+                    'via_sugerida'      => $det->forma_adm ?? '',
+                    'id_via_parenteral' => '',
                 ];
             }
 
@@ -373,13 +635,15 @@ class InyectablesRegister extends Component
         $soloNumeros = preg_replace('/[^0-9]/', '', (string) $this->nroRecetaBusqueda);
         $this->nroRecetaBusqueda = substr(ltrim($soloNumeros, '0'), 0, 10);
 
-        // Si el campo está vacío, limpiamos la información
+        // Si el campo está vacío, limpiamos la información de la receta buscada (conservando el paciente si ya hay inyecciones en la lista)
         if (trim($this->nroRecetaBusqueda) === '') {
-            $this->nombreCompletoPaciente = '';
-            $this->matriculaPaciente      = '';
-            $this->ciPaciente             = '';
-            $this->idPersona              = null;
-            $this->idEspecialista         = null;
+            if (empty($this->inyeccionesIngresados)) {
+                $this->nombreCompletoPaciente = '';
+                $this->matriculaPaciente      = '';
+                $this->ciPaciente             = '';
+                $this->idPersona              = null;
+                $this->idEspecialista         = null;
+            }
             
             $this->recetaSistemaEncontrada   = [];
             $this->medicamentosRecetaSistema = [];
@@ -422,17 +686,31 @@ class InyectablesRegister extends Component
             return;
         }
 
+        try {
+            $this->validate([
+                "medicamentosRecetaSistema.{$index}.id_via_parenteral" => 'required|integer',
+            ], [
+                "medicamentosRecetaSistema.{$index}.id_via_parenteral.required" => 'Debe seleccionar una vía parenteral.',
+                "medicamentosRecetaSistema.{$index}.id_via_parenteral.integer"  => 'Seleccione una vía parenteral válida.',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $this->dispatch('alertaError', mensaje: 'Debe seleccionar una vía parenteral para el medicamento.');
+            throw $e;
+        }
+
         $item = $this->medicamentosRecetaSistema[$index];
 
         // 1. Obtener nombre legible de la vía parenteral
-        $nombreVia = 'Intramuscular';
         $via = \App\Models\Enfermeria\ViaParenteral::find($item['id_via_parenteral']);
-        $nombreVia = $via ? $via->nombre : 'Intramuscular';
+        $nombreVia = $via ? $via->nombre : '';
 
         // 2. Extraer ID numérico
         $idRecetaActual = $this->recetaSistemaEncontrada['id'] 
                        ?? $this->recetaSistemaEncontrada['id_receta'] 
                        ?? null;
+
+        $itemOriginal = $item;
+        $itemOriginal['id_via_parenteral'] = '';
 
         // 3. Agregar a la tabla acumulada inferior
         $this->inyeccionesIngresados[] = [
@@ -447,16 +725,14 @@ class InyectablesRegister extends Component
             'cantidad'              => (int) ($item['cantidad'] ?? 1),
             'id_persona'            => (int) $this->idPersona,
             'id_especialista'       => !empty($this->idEspecialista) ? (int) $this->idEspecialista : null,
-            'item_receta_original'  => $item, // Esto es CLAVE para poder restaurarlo después
+            'item_receta_original'  => $itemOriginal, // Esto es CLAVE para poder restaurarlo después
         ];
 
         // 4. Remover el medicamento seleccionado de la tabla superior para evitar duplicados
         unset($this->medicamentosRecetaSistema[$index]);
         // Reindexar el arreglo para que no queden huecos en los índices de Livewire
         $this->medicamentosRecetaSistema = array_values($this->medicamentosRecetaSistema);
-
-        // Opcional: Mostrar alerta
-        // $this->dispatch('alertaExito', mensaje: 'Inyección agregada a la lista.');
+        $this->resetValidation();
     }
 
    // --- GUARDADO TRANSACCIONAL ATÓMICO ---
@@ -476,12 +752,14 @@ class InyectablesRegister extends Component
                 'inyeccionesIngresados.min'      => 'Debe ingresar al menos una inyección en la lista inferior.',
             ];
 
-            // Si es receta manual, exigimos médico y fecha
+            // Si es receta manual, exigimos médico, número de receta y fecha
             if ($this->tipoReceta === 'MANUAL') {
                 $reglas['idEspecialista']     = 'required|integer';
+                $reglas['numeroRecetaManual'] = 'required|string';
                 $reglas['fechaEmisionManual'] = 'required|date';
                 
                 $mensajes['idEspecialista.required']     = 'Debe seleccionar el médico solicitante de la receta manual.';
+                $mensajes['numeroRecetaManual.required'] = 'El número de receta manual es obligatorio.';
                 $mensajes['fechaEmisionManual.required'] = 'La fecha de emisión de la receta manual es obligatoria.';
             }
 
@@ -496,78 +774,299 @@ class InyectablesRegister extends Component
         try {
             DB::transaction(function () {
                 $idUser = auth()->id() ?? 1;
+                $observacionesProc = $this->construirObservacionesProcedimientos();
+                $datosProcedimiento = [
+                    'curacion_plana'      => $this->curacion_plana,
+                    'curacion_infectada'  => $this->curacion_infectada,
+                    'oxigenoterapia'      => $this->oxigenoterapia,
+                    'retiro_puntos'       => $this->retiro_puntos,
+                    'prueba_sensibilidad' => $this->prueba_sensibilidad,
+                    'sangria'             => $this->sangria,
+                    'signos_vitales'      => $this->signos_vitales,
+                    'tx_vo'               => $this->tx_vo,
+                    'orientacion_salud'   => $this->orientacion_salud,
+                    'vendajes'            => $this->vendajes,
+                    'nebulizacion'        => $this->nebulizacion,
+                    'otros'               => $this->otros ? $this->obs_otros : null,
+                    'observaciones'       => $observacionesProc !== '' ? $observacionesProc : null,
+                    'estado'              => true,
+                ];
 
-                // 2. Si es receta manual, registramos en enfermeria.receta_manual
-                $idRecetaManual = null;
                 if ($this->tipoReceta === 'MANUAL') {
                     $primerMed = $this->inyeccionesIngresados[0]['id_medicamento'] ?? null;
+                    $primeraInyeccion = $this->inyeccionesIngresados[0];
+                    $nroRecetaGuardar = !empty(trim($this->numeroRecetaManual))
+                        ? trim($this->numeroRecetaManual)
+                        : ($primeraInyeccion['nro_receta'] ?? null);
 
-                    $recMan = RecetaManual::create([
-                        'id_persona'       => $this->idPersona,
-                        'id_especialista'  => $this->idEspecialista,
-                        'id_medicamento'   => $primerMed,
-                        'fecha_receta'     => $this->fechaEmisionManual,
-                        'estado'           => true,
-                        'id_user_created'  => $idUser,
-                    ]);
-                    $idRecetaManual = $recMan->id;
+                    if ($this->modoEdicion && $this->idRegistroEditar) {
+                        $registro = RegistroInyeccion::findOrFail($this->idRegistroEditar);
+                        $idRecManual = $this->idRecetaManualEditar ?: $registro->id_receta_manual;
+
+                        if ($idRecManual) {
+                            RecetaManual::where('id', $idRecManual)->update([
+                                'numero_receta'   => $nroRecetaGuardar,
+                                'id_persona'      => $this->idPersona,
+                                'id_especialista' => $this->idEspecialista,
+                                'id_medicamento'  => $primerMed,
+                                'fecha_receta'    => $this->fechaEmisionManual,
+                                'id_user_updated' => $idUser,
+                            ]);
+                        } else {
+                            $recMan = RecetaManual::create([
+                                'numero_receta'   => $nroRecetaGuardar,
+                                'id_persona'      => $this->idPersona,
+                                'id_especialista' => $this->idEspecialista,
+                                'id_medicamento'  => $primerMed,
+                                'fecha_receta'    => $this->fechaEmisionManual,
+                                'estado'          => true,
+                                'id_user_created' => $idUser,
+                            ]);
+                            $idRecManual = $recMan->id;
+                        }
+
+                        $registro->update([
+                            'id_persona'        => $this->idPersona,
+                            'id_especialista'   => $this->idEspecialista ?? 1,
+                            'id_via_parenteral' => $primeraInyeccion['id_via_parenteral'],
+                            'id_receta_manual'  => $idRecManual,
+                            'id_user_updated'   => $idUser,
+                        ]);
+
+                        RegistroInyeccionMedicamento::where('id_registro_inyeccion', $registro->id)->delete();
+                        foreach ($this->inyeccionesIngresados as $item) {
+                            $nroItem = $nroRecetaGuardar ?: ($item['nro_receta'] ?? 'S/N');
+                            RegistroInyeccionMedicamento::create([
+                                'id_registro_inyeccion' => $registro->id,
+                                'id_medicamento'        => $item['id_medicamento'],
+                                'observacion'           => "Vía: {$item['via_parenteral_nombre']} | Receta: {$nroItem}",
+                                'estado'                => true,
+                                'id_user_created'       => $registro->id_user_created ?? $idUser,
+                                'id_user_updated'       => $idUser,
+                            ]);
+                        }
+
+                        $procExistente = RegistroInyeccionProcedimiento::where('id_registro_inyeccion', $registro->id)->first();
+                        if ($procExistente) {
+                            $procExistente->update(array_merge($datosProcedimiento, [
+                                'id_user_updated' => $idUser,
+                            ]));
+                        } else {
+                            RegistroInyeccionProcedimiento::create(array_merge($datosProcedimiento, [
+                                'id_registro_inyeccion' => $registro->id,
+                                'id_user_created'       => $idUser,
+                            ]));
+                        }
+                    } else {
+                        // Creación de Receta Manual nueva
+                        $recMan = RecetaManual::create([
+                            'numero_receta'   => $nroRecetaGuardar,
+                            'id_persona'      => $this->idPersona,
+                            'id_especialista' => $this->idEspecialista,
+                            'id_medicamento'  => $primerMed,
+                            'fecha_receta'    => $this->fechaEmisionManual,
+                            'estado'          => true,
+                            'id_user_created' => $idUser,
+                        ]);
+
+                        $registro = RegistroInyeccion::create([
+                            'id_persona'        => $this->idPersona,
+                            'id_especialista'   => $this->idEspecialista ?? 1,
+                            'id_via_parenteral' => $primeraInyeccion['id_via_parenteral'],
+                            'id_receta'         => null,
+                            'id_receta_manual'  => $recMan->id,
+                            'estado'            => true,
+                            'id_user_created'   => $idUser,
+                        ]);
+
+                        foreach ($this->inyeccionesIngresados as $item) {
+                            $nroItem = $nroRecetaGuardar ?: ($item['nro_receta'] ?? 'S/N');
+                            RegistroInyeccionMedicamento::create([
+                                'id_registro_inyeccion' => $registro->id,
+                                'id_medicamento'        => $item['id_medicamento'],
+                                'observacion'           => "Vía: {$item['via_parenteral_nombre']} | Receta: {$nroItem}",
+                                'estado'                => true,
+                                'id_user_created'       => $idUser,
+                            ]);
+                        }
+
+                        RegistroInyeccionProcedimiento::create(array_merge($datosProcedimiento, [
+                            'id_registro_inyeccion' => $registro->id,
+                            'id_user_created'       => $idUser,
+                        ]));
+                    }
+                } else {
+                    // MODO SISTEMA: Agrupar por receta para registrar o actualizar cada receta del paciente con sus inyecciones
+                    $gruposPorReceta = collect($this->inyeccionesIngresados)
+                        ->groupBy(fn ($item) => (string) ($item['id_receta'] ?? $item['nro_receta']));
+
+                    $registroEditadoProcesado = false;
+                    $registroOriginal = ($this->modoEdicion && $this->idRegistroEditar)
+                        ? RegistroInyeccion::find($this->idRegistroEditar)
+                        : null;
+
+                    foreach ($gruposPorReceta as $claveReceta => $itemsReceta) {
+                        $itemsArray = $itemsReceta->values()->all();
+                        $primera = $itemsArray[0];
+                        $idRecetaGrupo = !empty($primera['id_receta']) ? (int) $primera['id_receta'] : null;
+                        $idEspecialistaGrupo = !empty($primera['id_especialista'])
+                            ? (int) $primera['id_especialista']
+                            : ($this->idEspecialista ?? 1);
+
+                        if (
+                            $registroOriginal &&
+                            !$registroEditadoProcesado &&
+                            ((int) $registroOriginal->id_receta === (int) $idRecetaGrupo || $gruposPorReceta->count() === 1)
+                        ) {
+                            $registroEditadoProcesado = true;
+                            $registroOriginal->update([
+                                'id_persona'        => $this->idPersona,
+                                'id_especialista'   => $idEspecialistaGrupo,
+                                'id_via_parenteral' => $primera['id_via_parenteral'],
+                                'id_receta'         => $idRecetaGrupo,
+                                'id_user_updated'   => $idUser,
+                            ]);
+
+                            RegistroInyeccionMedicamento::where('id_registro_inyeccion', $registroOriginal->id)->delete();
+                            foreach ($itemsArray as $item) {
+                                RegistroInyeccionMedicamento::create([
+                                    'id_registro_inyeccion' => $registroOriginal->id,
+                                    'id_medicamento'        => $item['id_medicamento'],
+                                    'observacion'           => "Vía: {$item['via_parenteral_nombre']} | Receta: {$item['nro_receta']}",
+                                    'estado'                => true,
+                                    'id_user_created'       => $registroOriginal->id_user_created ?? $idUser,
+                                    'id_user_updated'       => $idUser,
+                                ]);
+                            }
+
+                            $procExistente = RegistroInyeccionProcedimiento::where('id_registro_inyeccion', $registroOriginal->id)->first();
+                            if ($procExistente) {
+                                $procExistente->update(array_merge($datosProcedimiento, [
+                                    'id_user_updated' => $idUser,
+                                ]));
+                            } else {
+                                RegistroInyeccionProcedimiento::create(array_merge($datosProcedimiento, [
+                                    'id_registro_inyeccion' => $registroOriginal->id,
+                                    'id_user_created'       => $idUser,
+                                ]));
+                            }
+                        } else {
+                            // Crear un RegistroInyeccion independiente por cada receta adicional (o nueva) del paciente
+                            $nuevoRegistro = RegistroInyeccion::create([
+                                'id_persona'        => $this->idPersona,
+                                'id_especialista'   => $idEspecialistaGrupo,
+                                'id_via_parenteral' => $primera['id_via_parenteral'],
+                                'id_receta'         => $idRecetaGrupo,
+                                'id_receta_manual'  => null,
+                                'estado'            => true,
+                                'id_user_created'   => $idUser,
+                            ]);
+
+                            foreach ($itemsArray as $item) {
+                                RegistroInyeccionMedicamento::create([
+                                    'id_registro_inyeccion' => $nuevoRegistro->id,
+                                    'id_medicamento'        => $item['id_medicamento'],
+                                    'observacion'           => "Vía: {$item['via_parenteral_nombre']} | Receta: {$item['nro_receta']}",
+                                    'estado'                => true,
+                                    'id_user_created'       => $idUser,
+                                ]);
+                            }
+
+                            RegistroInyeccionProcedimiento::create(array_merge($datosProcedimiento, [
+                                'id_registro_inyeccion' => $nuevoRegistro->id,
+                                'id_user_created'       => $idUser,
+                            ]));
+                        }
+                    }
                 }
-
-                // 3. Crear cabecera: enfermeria.registro_inyeccion
-                $primeraInyeccion = $this->inyeccionesIngresados[0];
-
-                $registro = RegistroInyeccion::create([
-                    'id_persona'         => $this->idPersona,
-                    'id_especialista'    => $this->idEspecialista ?? 1,
-                    'id_via_parenteral'  => $primeraInyeccion['id_via_parenteral'],
-                    'id_receta'          => ($this->tipoReceta === 'SISTEMA') ? ($primeraInyeccion['id_receta'] ?? null) : null,
-                    'id_receta_manual'   => $idRecetaManual,
-                    'estado'             => true,
-                    'id_user_created'    => $idUser,
-                ]);
-
-                // 4. Detalle N:M: enfermeria.registro_inyeccion_medicamento
-                foreach ($this->inyeccionesIngresados as $item) {
-                    RegistroInyeccionMedicamento::create([
-                        'id_registro_inyeccion' => $registro->id,
-                        'id_medicamento'        => $item['id_medicamento'],
-                        'observacion'           => "Vía: {$item['via_parenteral_nombre']} | Receta: {$item['nro_receta']}",
-                        'estado'                => true,
-                        'id_user_created'       => $idUser,
-                    ]);
-                }
-
-                // 5. Procedimientos complementarios (Checklist)
-                $obsArray = [];
-                if ($this->curacion_plana && $this->obs_curacion_plana) $obsArray[] = "Curación plana: {$this->obs_curacion_plana}";
-                if ($this->curacion_infectada && $this->obs_curacion_infectada) $obsArray[] = "Curación infectada: {$this->obs_curacion_infectada}";
-                if ($this->oxigenoterapia && $this->obs_oxigenoterapia) $obsArray[] = "Oxigenoterapia: {$this->obs_oxigenoterapia}";
-                if ($this->retiro_puntos && $this->obs_retiro_puntos) $obsArray[] = "Retiro puntos: {$this->obs_retiro_puntos}";
-
-                RegistroInyeccionProcedimiento::create([
-                    'id_registro_inyeccion' => $registro->id,
-                    'curacion_plana'        => $this->curacion_plana,
-                    'curacion_infectada'    => $this->curacion_infectada,
-                    'oxigenoterapia'        => $this->oxigenoterapia,
-                    'retiro_puntos'         => $this->retiro_puntos,
-                    'prueba_sensibilidad'   => $this->prueba_sensibilidad,
-                    'sangria'               => $this->sangria,
-                    'signos_vitales'        => $this->signos_vitales,
-                    'tx_vo'                 => $this->tx_vo,
-                    'orientacion_salud'     => $this->orientacion_salud,
-                    'vendajes'              => $this->vendajes,
-                    'nebulizacion'          => $this->nebulizacion,
-                    'otros'                 => $this->otros ? $this->obs_otros : null,
-                    'observaciones'         => !empty($obsArray) ? implode(' | ', $obsArray) : null,
-                    'estado'                => true,
-                    'id_user_created'       => $idUser,
-                ]);
             });
 
-            return redirect()->route('enfermeria.inyectables.index')->with('evento', 'InyeccionRegistrada');
+            $evento = $this->modoEdicion ? 'InyeccionActualizada' : 'InyeccionRegistrada';
+            return redirect()->route('enfermeria.inyectables.index')->with('evento', $evento);
         } catch (\Throwable $th) {
             $this->dispatch('alertaError', mensaje: 'Error al registrar la atención: ' . $th->getMessage());
         }
+    }
+
+    #[On('limpiarFormularioInyeccion')]
+    public function limpiarFormulario(): void
+    {
+        $this->setTipoReceta('SISTEMA');
+        $this->curacion_plana = false;
+        $this->obs_curacion_plana = '';
+        $this->curacion_infectada = false;
+        $this->obs_curacion_infectada = '';
+        $this->oxigenoterapia = false;
+        $this->obs_oxigenoterapia = '';
+        $this->retiro_puntos = false;
+        $this->obs_retiro_puntos = '';
+        $this->prueba_sensibilidad = false;
+        $this->obs_prueba_sensibilidad = '';
+        $this->sangria = false;
+        $this->obs_sangria = '';
+        $this->signos_vitales = false;
+        $this->obs_signos_vitales = '';
+        $this->tx_vo = false;
+        $this->obs_tx_vo = '';
+        $this->orientacion_salud = false;
+        $this->obs_orientacion_salud = '';
+        $this->vendajes = false;
+        $this->obs_vendajes = '';
+        $this->nebulizacion = false;
+        $this->obs_nebulizacion = '';
+        $this->otros = false;
+        $this->obs_otros = '';
+        $this->resetValidation();
+    }
+
+    public function abrirModalEspecialistas(): void
+    {
+        $this->dispatch('modalEspecialistasLista');
+    }
+
+    #[On('especialistaSeleccionado')]
+    public function especialistaSeleccionado($id = null, $nombre = '', $especialidad = '', $datos = null): void
+    {
+        if (is_array($id)) {
+            $nombre       = $id['nombre'] ?? $nombre;
+            $especialidad = $id['especialidad'] ?? $especialidad;
+            $id           = $id['id'] ?? null;
+        } elseif (is_array($datos)) {
+            $id           = $datos['id'] ?? $id;
+            $nombre       = $datos['nombre'] ?? $nombre;
+            $especialidad = $datos['especialidad'] ?? $especialidad;
+        }
+
+        $this->seleccionarEspecialista((int) $id, (string) $nombre, (string) $especialidad);
+        $this->dispatch('cerrarModalEspecialistasLista');
+    }
+
+    public function abrirModalMedicamentos(): void
+    {
+        $this->dispatch('modalMedicamentosLista');
+    }
+
+    #[On('medicamentoInyectableSeleccionado')]
+    public function medicamentoInyectableSeleccionado($id = null, $codigo = '', $nombre = '', $datos = null): void
+    {
+        if (is_array($id)) {
+            $codigo = $id['codigo'] ?? $codigo;
+            $nombre = $id['nombre'] ?? $nombre;
+            $id     = $id['id'] ?? null;
+        } elseif (is_array($datos)) {
+            $id     = $datos['id'] ?? $id;
+            $codigo = $datos['codigo'] ?? $codigo;
+            $nombre = $datos['nombre'] ?? $nombre;
+        }
+
+        $idsYaAgregados = collect($this->inyeccionesIngresados)->pluck('id_medicamento')->toArray();
+        if (in_array((int) $id, $idsYaAgregados)) {
+            $this->dispatch('alertaError', mensaje: 'Este medicamento ya fue agregado a la lista.');
+            return;
+        }
+
+        $this->seleccionarMedicamentoInyectable((int) $id, (string) $codigo, (string) $nombre);
+        $this->dispatch('cerrarModalMedicamentosLista');
     }
 
   // Método que llama tu botón: wire:click="abrirModalPacientes"
@@ -575,15 +1074,13 @@ class InyectablesRegister extends Component
     public function cerrarModalPacientes(): void
     {
         $this->modalBuscarPaciente = false;
+        $this->dispatch('cerrarModalPersonasLista');
     }
 
     // --- MODO MANUAL: MODAL DE PACIENTES (NestJS) ---
     public function abrirModalPacientes()
     {
-        $this->modalBuscarPaciente = true;
-        $this->terminoBusquedaPaciente = '';
-        $this->ejecutarBusquedaPacientesModal();
-        $this->dispatch('abrirModalAsegurados');
+        $this->dispatch('modalPersonasLista');
     }
 
     public function updatedTerminoBusquedaPaciente()
@@ -709,6 +1206,7 @@ class InyectablesRegister extends Component
 
         // Cerrar el modal automáticamente
         $this->modalBuscarPaciente = false;
+        $this->dispatch('cerrarModalPersonasLista');
     }
    
 

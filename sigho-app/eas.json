@@ -17,7 +17,10 @@
     },
     "production": {
       "android": {
-        "buildType": "apk"
+        "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://tu-dominio-o-ip-servidor.org/api"
       }
     }
   },

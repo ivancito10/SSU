@@ -19,6 +19,8 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
+import { File as ExpoFile, Paths as ExpoPaths } from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library';
 import { theme } from '../../../core/theme/theme';
 import { AppIcon, NombreIcono } from '../../../core/components/AppIcon';
 import { AppAlert } from '../../../core/components/AlertaGlobalModal';
@@ -175,6 +177,8 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
     const [nombreActaGuardada, setNombreActaGuardada] = useState<string>(ticket.nombre_archivo_acta || '');
     const [tipoMimeActaGuardada, setTipoMimeActaGuardada] = useState<string>(ticket.tipo_mime_acta || '');
     const [modalVerActaVisible, setModalVerActaVisible] = useState<boolean>(false);
+    const [imagenAdjuntaModal, setImagenAdjuntaModal] = useState<{ url: string; nombre: string } | null>(null);
+    const [descargandoArchivo, setDescargandoArchivo] = useState<boolean>(false);
 
     // Detección de teclado para ocultar ondas inferiores
     const [tecladoVisible, setTecladoVisible] = useState(false);
@@ -287,6 +291,11 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
         try {
             const guardada = await calificarTecnicoSoporte(idReal, calificacion);
             setCalificacionGuardada(guardada || { calificacion });
+            AppAlert.alert('¡Gracias por tu calificación!', 'Tu calificación quedó registrada correctamente.');
+            (navigation as any).navigate('Main', {
+                filtroInicial: 'FINALIZADAS',
+                filtroTs: Date.now(),
+            });
         } catch (error: any) {
             setCalificacionSeleccionada(null);
             AppAlert.alert('No se pudo calificar', error?.response?.data?.message || 'Intenta nuevamente más tarde.');
@@ -439,7 +448,10 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
         try {
             await asignarSoporte(Number(idReal), Number(idTecnico), prioridad, instruccionesTecnico.trim() || undefined);
             AppAlert.alert('Éxito', `El ticket ha sido asignado al técnico con prioridad ${prioridad}.`);
-            navigation.goBack();
+            (navigation as any).navigate('Main', {
+                filtroInicial: 'ASIGNADAS',
+                filtroTs: Date.now(),
+            });
         } catch (error: any) {
             console.error('Error al asignar técnico:', error);
             const msg = error?.response?.data?.message || 'No se pudo asignar el técnico al ticket.';
@@ -466,7 +478,10 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
         try {
             await reasignarSoporteOperador(Number(idReal), Number(idTecnico), justificacionReasignacion.trim(), prioridad, instruccionesTecnico.trim() || undefined);
             AppAlert.alert('Éxito', 'El ticket fue reasignado al nuevo técnico correctamente.');
-            navigation.goBack();
+            (navigation as any).navigate('Main', {
+                filtroInicial: 'ASIGNADAS',
+                filtroTs: Date.now(),
+            });
         } catch (error: any) {
             console.error('Error al reasignar técnico:', error);
             const msg = error?.response?.data?.message || 'No se pudo reasignar el técnico.';
@@ -483,10 +498,30 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
             setEstadoActual('EN_PROCESO');
             setTimestampInicioLocal(Date.now());
             setBaseSegundosInicio(0);
-            AppAlert.alert('En Proceso', 'Has iniciado la atención del soporte.');
+
+            // Registrar ubicación GPS en segundo plano al iniciar la atención
+            if (ticket.id_asignacion && !ticket.fecha_en_camino) {
+                try {
+                    const coordenadas = await capturarUbicacionActual();
+                    const datos = await registrarTecnicoEnCamino(
+                        Number(ticket.id_asignacion),
+                        coordenadas.latitud,
+                        coordenadas.longitud,
+                    );
+                    setTicket((actual) => ({ ...actual, ...datos, estado: 'EN_PROCESO' }));
+                } catch (errUbicacion: any) {
+                    console.warn('No se pudo registrar la ubicación al iniciar atención:', errUbicacion?.message || errUbicacion);
+                }
+            }
+
+            AppAlert.alert('Atención iniciada', 'Has iniciado la atención del soporte.');
+            (navigation as any).navigate('Main', {
+                filtroInicial: 'EN_PROCESO',
+                filtroTs: Date.now(),
+            });
         } catch (error: any) {
             console.error('Error al poner en proceso:', error);
-            AppAlert.alert('Error', 'No se pudo cambiar el estado a En Proceso.');
+            AppAlert.alert('Error', 'No se pudo iniciar la atención del soporte.');
         } finally {
             setCargando(false);
         }
@@ -497,11 +532,28 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
         if (permiso.status !== 'granted') {
             throw new Error('Activa el permiso de ubicación para registrar el trayecto.');
         }
-        const ubicacion = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-        return {
-            latitud: ubicacion.coords.latitude,
-            longitud: ubicacion.coords.longitude,
-        };
+        try {
+            const ubicacion = await Promise.race([
+                Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced }),
+                new Promise<never>((_, reject) =>
+                    setTimeout(() => reject(new Error('Tiempo de espera agotado al obtener GPS.')), 6000),
+                ),
+            ]);
+            return {
+                latitud: ubicacion.coords.latitude,
+                longitud: ubicacion.coords.longitude,
+            };
+        } catch {
+            // Respaldo rápido en interiores: última ubicación conocida del dispositivo
+            const ultima = await Location.getLastKnownPositionAsync();
+            if (ultima?.coords) {
+                return {
+                    latitud: ultima.coords.latitude,
+                    longitud: ultima.coords.longitude,
+                };
+            }
+            throw new Error('No se pudo obtener la ubicación GPS actual.');
+        }
     };
 
     const handleRegistrarEnCamino = async () => {
@@ -546,6 +598,49 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
         Linking.openURL(url).catch(() => AppAlert.alert('No se pudo abrir el mapa', 'Verifica que el dispositivo tenga una aplicación de mapas disponible.'));
     };
 
+    const descargarArchivoDirecto = async (url?: string | null, nombreArchivo?: string | null) => {
+        if (!url || descargandoArchivo) return;
+        setDescargandoArchivo(true);
+        try {
+            const nombreDesdeUrl = url.split('?')[0].split('/').pop() || 'imagen-soporte.jpg';
+            const nombreBase = (nombreArchivo || nombreDesdeUrl).trim() || 'imagen-soporte.jpg';
+            const nombreLimpio = nombreBase.replace(/[<>:"/\\|?*]+/g, '_');
+
+            if (Platform.OS === 'web' && typeof window !== 'undefined' && typeof document !== 'undefined') {
+                const respuesta = await fetch(url);
+                if (!respuesta.ok) {
+                    throw new Error('No se pudo obtener el archivo desde el servidor.');
+                }
+                const blob = await respuesta.blob();
+                const blobUrl = window.URL.createObjectURL(blob);
+                const enlace = document.createElement('a');
+                enlace.href = blobUrl;
+                enlace.download = nombreLimpio;
+                document.body.appendChild(enlace);
+                enlace.click();
+                document.body.removeChild(enlace);
+                setTimeout(() => window.URL.revokeObjectURL(blobUrl), 1000);
+                return;
+            }
+
+            const permiso = await MediaLibrary.requestPermissionsAsync(true);
+            if (!permiso.granted) {
+                AppAlert.alert('Permiso requerido', 'Permite el acceso a la galería para guardar la imagen.');
+                return;
+            }
+
+            const destino = new ExpoFile(ExpoPaths.cache, `${Date.now()}_${nombreLimpio}`);
+            const archivoDescargado = await ExpoFile.downloadFileAsync(url, destino, { idempotent: true });
+            await MediaLibrary.saveToLibraryAsync(archivoDescargado.uri);
+            AppAlert.alert('Descarga completada', 'La imagen se guardó en tu galería.');
+        } catch (error: any) {
+            console.error('Error al descargar archivo:', error);
+            AppAlert.alert('Error al descargar', error?.message || 'No se pudo descargar el archivo.');
+        } finally {
+            setDescargandoArchivo(false);
+        }
+    };
+
     const handleDerivarTecnico = async () => {
         if (!idNuevoTecnico) {
             AppAlert.alert('Atención', 'Debes seleccionar al técnico al que deseas derivar el soporte.');
@@ -563,11 +658,23 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
 
         setGuardandoReasignacion(true);
         try {
+            // Detener y registrar ubicación final si el técnico ya había iniciado atención antes de derivar
+            if (ticket.fecha_en_camino && !ticket.fecha_llegada) {
+                try {
+                    const coordenadas = await capturarUbicacionActual();
+                    await registrarLlegadaTecnico(Number(idAsignacion), coordenadas.latitud, coordenadas.longitud);
+                } catch (errUbicacion: any) {
+                    console.warn('No se pudo registrar ubicación antes de derivar:', errUbicacion?.message || errUbicacion);
+                }
+            }
             await reasignarSoporte(Number(idAsignacion), Number(idNuevoTecnico), motivoDerivacion.trim());
             setModalReasignarVisible(false);
             setMotivoDerivacion('');
             AppAlert.alert('Soporte Derivado', 'El soporte ha sido derivado exitosamente.');
-            navigation.goBack();
+            (navigation as any).navigate('Main', {
+                filtroInicial: 'DERIVADAS',
+                filtroTs: Date.now(),
+            });
         } catch (error: any) {
             console.error('Error al derivar soporte:', error);
             const msg = error?.response?.data?.message || 'No se pudo derivar el soporte.';
@@ -623,9 +730,21 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
 
         setCargando(true);
         try {
+            // Detener el seguimiento de ubicación del técnico al subir el acta y finalizar
+            if (ticket.fecha_en_camino && !ticket.fecha_llegada) {
+                try {
+                    const coordenadas = await capturarUbicacionActual();
+                    await registrarLlegadaTecnico(Number(idAsignacion), coordenadas.latitud, coordenadas.longitud);
+                } catch (errLlegada: any) {
+                    console.warn('No se pudo registrar la ubicación final al concluir:', errLlegada?.message || errLlegada);
+                }
+            }
             await finalizarSoporte(Number(idAsignacion), archivoActaUri, diagnostico.trim());
             AppAlert.alert('¡Soporte Finalizado!', 'El acta y el registro del soporte se guardaron correctamente.');
-            navigation.goBack();
+            (navigation as any).navigate('Main', {
+                filtroInicial: 'FINALIZADAS',
+                filtroTs: Date.now(),
+            });
         } catch (error: any) {
             console.error('Error al finalizar soporte:', error);
             const msg = error?.response?.data?.message || 'No se pudo finalizar el soporte.';
@@ -734,12 +853,22 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
                                 <View style={styles.summaryRow}>
                                     <View>
                                         <Text style={styles.summaryMiniLabel}>ESTADO ACTUAL</Text>
-                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
                                             <View style={[styles.statusBadge, { backgroundColor: estiloEstado.bg, borderColor: estiloEstado.border }]}>
                                                 <Text style={[styles.statusBadgeText, { color: estiloEstado.color }]}>
                                                     {estiloEstado.texto}
                                                 </Text>
                                             </View>
+                                            {rolUsuario === RolBandeja.USUARIO &&
+                                                estadoActual !== 'FINALIZADA' &&
+                                                !ticket.fecha_llegada &&
+                                                (estadoActual === 'EN_PROCESO' || Boolean(ticket.fecha_en_camino)) && (
+                                                    <View style={[styles.statusBadge, { backgroundColor: '#ecfeff', borderColor: '#a5f3fc' }]}>
+                                                        <Text style={[styles.statusBadgeText, { color: '#0e7490' }]}>
+                                                            EN CAMINO
+                                                        </Text>
+                                                    </View>
+                                                )}
                                             {infoPrioridad && (
                                                 <View style={[styles.priorityBadge, { backgroundColor: infoPrioridad.bg, borderColor: infoPrioridad.color }]}>
                                                     <View style={[styles.priorityDot, { backgroundColor: infoPrioridad.dot }]} />
@@ -805,68 +934,68 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
                                 </View>
                             </View>
 
-                            <View style={styles.travelStatusBox}>
-                                <View style={styles.sectionHeaderRow}>
-                                    <View style={[styles.sectionIconPill, { backgroundColor: '#ecfeff' }]}>
-                                        <AppIcon name="location" size={15} color="#0e7490" />
+                            {rolUsuario === RolBandeja.OPERADOR && (
+                                <View style={styles.travelStatusBox}>
+                                    <View style={styles.sectionHeaderRow}>
+                                        <View style={[styles.sectionIconPill, { backgroundColor: '#ecfeff' }]}>
+                                            <AppIcon name="location" size={15} color="#0e7490" />
+                                        </View>
+                                        <Text style={styles.sectionCardTitle}>Ubicación del técnico</Text>
                                     </View>
-                                    <Text style={styles.sectionCardTitle}>Trayecto del técnico</Text>
-                                </View>
-                                {!ticket.fecha_en_camino ? (
-                                    <Text style={styles.travelHelpText}>El técnico aún no ha marcado que está en camino.</Text>
-                                ) : (
-                                    <>
-                                        <View style={styles.travelStatusPill}>
-                                            <Text style={styles.travelStatusPillText}>
-                                                {ticket.fecha_llegada ? 'LLEGADA REGISTRADA' : 'EN CAMINO'}
-                                            </Text>
-                                        </View>
-                                        <View style={styles.travelInfoRow}>
-                                            <Text style={styles.travelInfoLabel}>Salió:</Text>
-                                            <Text style={styles.travelInfoValue}>{formatearFechaHora(ticket.fecha_en_camino)}</Text>
-                                        </View>
-                                        {ticket.latitud_en_camino !== null && ticket.latitud_en_camino !== undefined && ticket.longitud_en_camino !== null && ticket.longitud_en_camino !== undefined && Number.isFinite(Number(ticket.latitud_en_camino)) && Number.isFinite(Number(ticket.longitud_en_camino)) && (
-                                            <TouchableOpacity onPress={() => abrirMapa(ticket.latitud_en_camino, ticket.longitud_en_camino)} activeOpacity={0.75}>
-                                                <Text style={styles.travelMapLink}>
-                                                    Ver ubicación de salida · {Number(ticket.latitud_en_camino).toFixed(5)}, {Number(ticket.longitud_en_camino).toFixed(5)}
+                                    {!ticket.fecha_en_camino ? (
+                                        <Text style={styles.travelHelpText}>El técnico aún no ha iniciado la atención.</Text>
+                                    ) : (
+                                        <>
+                                            <View style={styles.travelStatusPill}>
+                                                <Text style={styles.travelStatusPillText}>
+                                                    {ticket.fecha_llegada || estadoActual === 'FINALIZADA' ? 'FINALIZADO' : 'EN CAMINO'}
                                                 </Text>
-                                            </TouchableOpacity>
-                                        )}
-                                        <View style={styles.travelInfoRow}>
-                                            <Text style={styles.travelInfoLabel}>{ticket.fecha_llegada ? 'Llegó:' : 'Tiempo en camino:'}</Text>
-                                            <Text style={styles.travelInfoValue}>{ticket.fecha_llegada ? formatearFechaHora(ticket.fecha_llegada) : tiempoTrayecto}</Text>
-                                        </View>
-                                        {ticket.fecha_llegada && ticket.latitud_llegada !== null && ticket.latitud_llegada !== undefined && ticket.longitud_llegada !== null && ticket.longitud_llegada !== undefined && Number.isFinite(Number(ticket.latitud_llegada)) && Number.isFinite(Number(ticket.longitud_llegada)) && (
-                                            <TouchableOpacity onPress={() => abrirMapa(ticket.latitud_llegada, ticket.longitud_llegada)} activeOpacity={0.75}>
-                                                <Text style={styles.travelMapLink}>
-                                                    Ver ubicación de llegada · {Number(ticket.latitud_llegada).toFixed(5)}, {Number(ticket.longitud_llegada).toFixed(5)}
-                                                </Text>
-                                            </TouchableOpacity>
-                                        )}
-                                        {ticket.fecha_llegada && (
-                                            <View style={styles.travelInfoRow}>
-                                                <Text style={styles.travelInfoLabel}>Duración del trayecto:</Text>
-                                                <Text style={styles.travelInfoValue}>{tiempoTrayecto}</Text>
                                             </View>
-                                        )}
-                                    </>
+                                            <View style={styles.travelInfoRow}>
+                                                <Text style={styles.travelInfoLabel}>Salió:</Text>
+                                                <Text style={styles.travelInfoValue}>{formatearFechaHora(ticket.fecha_en_camino)}</Text>
+                                            </View>
+                                            {ticket.latitud_en_camino !== null && ticket.latitud_en_camino !== undefined && ticket.longitud_en_camino !== null && ticket.longitud_en_camino !== undefined && Number.isFinite(Number(ticket.latitud_en_camino)) && Number.isFinite(Number(ticket.longitud_en_camino)) && (
+                                                <TouchableOpacity onPress={() => abrirMapa(ticket.latitud_en_camino, ticket.longitud_en_camino)} activeOpacity={0.75}>
+                                                    <Text style={styles.travelMapLink}>
+                                                        Ver ubicación de salida · {Number(ticket.latitud_en_camino).toFixed(5)}, {Number(ticket.longitud_en_camino).toFixed(5)}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            )}
+                                            <View style={styles.travelInfoRow}>
+                                                <Text style={styles.travelInfoLabel}>{ticket.fecha_llegada ? 'Finalizó / Llegó:' : 'Tiempo en camino:'}</Text>
+                                                <Text style={styles.travelInfoValue}>{ticket.fecha_llegada ? formatearFechaHora(ticket.fecha_llegada) : tiempoTrayecto}</Text>
+                                            </View>
+                                            {ticket.fecha_llegada && ticket.latitud_llegada !== null && ticket.latitud_llegada !== undefined && ticket.longitud_llegada !== null && ticket.longitud_llegada !== undefined && Number.isFinite(Number(ticket.latitud_llegada)) && Number.isFinite(Number(ticket.longitud_llegada)) && (
+                                                <TouchableOpacity onPress={() => abrirMapa(ticket.latitud_llegada, ticket.longitud_llegada)} activeOpacity={0.75}>
+                                                    <Text style={styles.travelMapLink}>
+                                                        Ver ubicación final · {Number(ticket.latitud_llegada).toFixed(5)}, {Number(ticket.longitud_llegada).toFixed(5)}
+                                                    </Text>
+                                                </TouchableOpacity>
+                                            )}
+                                            {ticket.fecha_llegada && (
+                                                <View style={styles.travelInfoRow}>
+                                                    <Text style={styles.travelInfoLabel}>Duración del trayecto:</Text>
+                                                    <Text style={styles.travelInfoValue}>{tiempoTrayecto}</Text>
+                                                </View>
+                                            )}
+                                        </>
+                                    )}
+                                </View>
+                            )}
+
+                            {rolUsuario === RolBandeja.USUARIO &&
+                                estadoActual !== 'FINALIZADA' &&
+                                (estadoActual === 'EN_PROCESO' || !!ticket.fecha_en_camino) && (
+                                    <View style={styles.travelStatusBox}>
+                                        <View style={[styles.sectionHeaderRow, { marginBottom: 0 }]}>
+                                            <View style={[styles.sectionIconPill, { backgroundColor: '#ecfeff' }]}>
+                                                <AppIcon name="location" size={15} color="#0e7490" />
+                                            </View>
+                                            <Text style={[styles.sectionCardTitle, { color: '#0e7490' }]}>En camino</Text>
+                                        </View>
+                                    </View>
                                 )}
-                                {puedeRegistrarTrayecto && !ticket.fecha_llegada && (
-                                    <TouchableOpacity
-                                        style={[styles.primaryActionBtn, styles.travelActionButton, !ticket.fecha_en_camino && { backgroundColor: '#0e7490' }]}
-                                        onPress={ticket.fecha_en_camino ? handleRegistrarLlegada : handleRegistrarEnCamino}
-                                        disabled={registrandoTrayecto || cargando}
-                                        activeOpacity={0.82}
-                                    >
-                                        {registrandoTrayecto ? <ActivityIndicator color="#ffffff" /> : (
-                                            <>
-                                                <AppIcon name="location" size={16} color="#ffffff" />
-                                                <Text style={styles.primaryActionBtnText}>{ticket.fecha_en_camino ? 'Llegué a la sede' : 'En camino'}</Text>
-                                            </>
-                                        )}
-                                    </TouchableOpacity>
-                                )}
-                            </View>
                         </View>
 
                         {/* TARJETA 2: PROBLEMAS REPORTADOS Y TÉCNICO */}
@@ -893,7 +1022,16 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
                                             {index === 0 && (item.adjuntos || []).map((adjunto: any) => {
                                                 const urlImagen = construirUrlArchivo(adjunto.ruta_url);
                                                 return urlImagen ? (
-                                                    <TouchableOpacity key={adjunto.id} onPress={() => Linking.openURL(urlImagen)} style={styles.problemAttachment}>
+                                                    <TouchableOpacity
+                                                        key={adjunto.id}
+                                                        onPress={() =>
+                                                            setImagenAdjuntaModal({
+                                                                url: urlImagen,
+                                                                nombre: adjunto.nombre_archivo || 'imagen-adjunta.jpg',
+                                                            })
+                                                        }
+                                                        style={styles.problemAttachment}
+                                                    >
                                                         <Image source={{ uri: urlImagen }} style={styles.problemAttachmentImage} resizeMode="cover" />
                                                         <Text style={styles.problemAttachmentText}>Ver imagen adjunta</Text>
                                                     </TouchableOpacity>
@@ -1400,7 +1538,7 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
                                         ) : (
                                             <>
                                                 <AppIcon name="play" size={16} color="#ffffff" />
-                                                <Text style={styles.primaryActionBtnText}>Poner En Proceso (Iniciar)</Text>
+                                                <Text style={styles.primaryActionBtnText}>Iniciar atención</Text>
                                             </>
                                         )}
                                     </TouchableOpacity>
@@ -1758,6 +1896,81 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
                                                 </View>
                                             </View>
 
+                                            {rolUsuario === RolBandeja.OPERADOR && Boolean(etapa.fecha_en_camino) && (
+                                                <View
+                                                    style={{
+                                                        marginTop: 8,
+                                                        padding: 10,
+                                                        borderRadius: 10,
+                                                        backgroundColor: '#ecfeff',
+                                                        borderWidth: 1,
+                                                        borderColor: '#a5f3fc',
+                                                    }}
+                                                >
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                                                            <AppIcon name="location" size={12} color="#0e7490" />
+                                                            <Text style={{ fontSize: 11, fontWeight: '800', color: '#0e7490' }}>
+                                                                UBICACIÓN Y TRAYECTO
+                                                            </Text>
+                                                        </View>
+                                                        {etapa.segundos_en_camino !== null && etapa.segundos_en_camino !== undefined && (
+                                                            <Text style={{ fontSize: 11, fontWeight: '800', color: '#155e75' }}>
+                                                                {formatearSegundos(Number(etapa.segundos_en_camino || 0))}
+                                                            </Text>
+                                                        )}
+                                                    </View>
+
+                                                    <Text style={{ fontSize: 12, color: '#334155' }}>
+                                                        Salió: {formatearFechaHora(etapa.fecha_en_camino)}
+                                                    </Text>
+                                                    {etapa.latitud_en_camino !== null &&
+                                                        etapa.latitud_en_camino !== undefined &&
+                                                        etapa.longitud_en_camino !== null &&
+                                                        etapa.longitud_en_camino !== undefined &&
+                                                        Number.isFinite(Number(etapa.latitud_en_camino)) &&
+                                                        Number.isFinite(Number(etapa.longitud_en_camino)) && (
+                                                            <TouchableOpacity
+                                                                onPress={() => abrirMapa(etapa.latitud_en_camino, etapa.longitud_en_camino)}
+                                                                activeOpacity={0.75}
+                                                                style={{ marginTop: 3 }}
+                                                            >
+                                                                <Text style={styles.travelMapLink}>
+                                                                    Ver ubicación de salida · {Number(etapa.latitud_en_camino).toFixed(5)}, {Number(etapa.longitud_en_camino).toFixed(5)}
+                                                                </Text>
+                                                            </TouchableOpacity>
+                                                        )}
+
+                                                    {etapa.fecha_llegada ? (
+                                                        <>
+                                                            <Text style={{ fontSize: 12, color: '#334155', marginTop: 4 }}>
+                                                                Detenido: {formatearFechaHora(etapa.fecha_llegada)}
+                                                            </Text>
+                                                            {etapa.latitud_llegada !== null &&
+                                                                etapa.latitud_llegada !== undefined &&
+                                                                etapa.longitud_llegada !== null &&
+                                                                etapa.longitud_llegada !== undefined &&
+                                                                Number.isFinite(Number(etapa.latitud_llegada)) &&
+                                                                Number.isFinite(Number(etapa.longitud_llegada)) && (
+                                                                    <TouchableOpacity
+                                                                        onPress={() => abrirMapa(etapa.latitud_llegada, etapa.longitud_llegada)}
+                                                                        activeOpacity={0.75}
+                                                                        style={{ marginTop: 3 }}
+                                                                    >
+                                                                        <Text style={styles.travelMapLink}>
+                                                                            Ver ubicación final · {Number(etapa.latitud_llegada).toFixed(5)}, {Number(etapa.longitud_llegada).toFixed(5)}
+                                                                        </Text>
+                                                                    </TouchableOpacity>
+                                                                )}
+                                                        </>
+                                                    ) : (
+                                                        <Text style={{ fontSize: 11, color: '#0e7490', fontWeight: '700', marginTop: 4 }}>
+                                                            En camino actualmente
+                                                        </Text>
+                                                    )}
+                                                </View>
+                                            )}
+
                                             {etapa.fecha_derivacion && etapa.nombre_destino ? (
                                                 <View style={styles.historyHandoffRow}>
                                                     <AppIcon name="refresh" size={12} color="#475569" />
@@ -1832,20 +2045,81 @@ export const TicketDetalleScreen = ({ route, navigation }: any) => {
 
                         <View style={styles.modalButtons}>
                             <TouchableOpacity
-                                style={[styles.modalBtnCancel, { marginRight: 'auto' }]}
+                                style={[styles.modalBtnCancel, { marginRight: 'auto' }, descargandoArchivo && { opacity: 0.65 }]}
+                                disabled={descargandoArchivo}
                                 onPress={() => {
                                     const url = construirUrlArchivo(rutaActaGuardada || ticket.url_acta);
-                                    if (url) Linking.openURL(url);
+                                    void descargarArchivoDirecto(url, nombreActaGuardada || 'acta-soporte.jpg');
                                 }}
                             >
-                                <Text style={{ color: '#164a96', fontWeight: 'bold', fontSize: 13 }}>
-                                    Abrir / Descargar
-                                </Text>
+                                {descargandoArchivo ? (
+                                    <ActivityIndicator size="small" color="#164a96" />
+                                ) : (
+                                    <Text style={{ color: '#164a96', fontWeight: 'bold', fontSize: 13 }}>
+                                        Descargar
+                                    </Text>
+                                )}
                             </TouchableOpacity>
 
                             <TouchableOpacity
                                 style={styles.modalBtnSubmit}
                                 onPress={() => setModalVerActaVisible(false)}
+                            >
+                                <Text style={styles.modalBtnSubmitText}>Cerrar</Text>
+                            </TouchableOpacity>
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
+            {/* MODAL INTERNO: VER IMAGEN ADJUNTA DEL PROBLEMA (MISMO ESTILO QUE ACTA) */}
+            <Modal
+                animationType="fade"
+                transparent={true}
+                visible={imagenAdjuntaModal !== null}
+                onRequestClose={() => setImagenAdjuntaModal(null)}
+            >
+                <View style={styles.modalOverlay}>
+                    <View style={[styles.modalContent, { maxWidth: 620 }]}>
+                        <Text style={styles.modalTitle}>Imagen Adjunta del Problema</Text>
+                        {Boolean(imagenAdjuntaModal?.nombre) && (
+                            <Text style={{ textAlign: 'center', color: '#64748b', fontSize: 12, marginBottom: 10 }}>
+                                {imagenAdjuntaModal?.nombre}
+                            </Text>
+                        )}
+
+                        {imagenAdjuntaModal?.url ? (
+                            <View style={{ alignItems: 'center', marginBottom: 14 }}>
+                                <Image
+                                    source={{ uri: imagenAdjuntaModal.url }}
+                                    style={{ width: '100%', height: 400, borderRadius: 12, backgroundColor: '#f1f5f9' }}
+                                    resizeMode="contain"
+                                />
+                            </View>
+                        ) : (
+                            <Text style={styles.emptyItemsText}>No se pudo cargar la imagen adjunta.</Text>
+                        )}
+
+                        <View style={styles.modalButtons}>
+                            <TouchableOpacity
+                                style={[styles.modalBtnCancel, { marginRight: 'auto' }, descargandoArchivo && { opacity: 0.65 }]}
+                                disabled={descargandoArchivo}
+                                onPress={() => {
+                                    void descargarArchivoDirecto(imagenAdjuntaModal?.url, imagenAdjuntaModal?.nombre);
+                                }}
+                            >
+                                {descargandoArchivo ? (
+                                    <ActivityIndicator size="small" color="#164a96" />
+                                ) : (
+                                    <Text style={{ color: '#164a96', fontWeight: 'bold', fontSize: 13 }}>
+                                        Descargar
+                                    </Text>
+                                )}
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.modalBtnSubmit}
+                                onPress={() => setImagenAdjuntaModal(null)}
                             >
                                 <Text style={styles.modalBtnSubmitText}>Cerrar</Text>
                             </TouchableOpacity>

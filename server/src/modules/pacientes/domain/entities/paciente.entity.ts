@@ -17,5 +17,9 @@ export class Paciente {
     public readonly estado: boolean,
     public readonly institucion: string,
     public readonly instituciones: PacienteInstitucionDetalle[] = [],
+    public readonly primerApellido: string = '',
+    public readonly segundoApellido: string = '',
+    public readonly nombres: string = '',
+    public readonly idTipoAsegurado: number | null = null,
   ) {}
 }
