@@ -1,0 +1,1 @@
+<livewire:Afiliacion.ssue.ssue-carnet-estudiante :idEst="$id"/>

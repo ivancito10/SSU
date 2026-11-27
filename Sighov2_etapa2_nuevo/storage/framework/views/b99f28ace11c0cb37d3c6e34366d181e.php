@@ -1,3 +1,0 @@
-<button wire:click="$dispatch(&#039;cambiarEstadoInyeccion&#039;, JSON.parse(&#039;{\u0022id\u0022:1}&#039;))" class="btn btn-red" title="ANULAR ATENCIÓN"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-x-lg" viewBox="0 0 16 16">
-                    <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8z"/>
-                    </svg></button><?php /**PATH C:\Users\TIC-HP\SSU\Sighov2_etapa2_nuevo\storage\framework\views/9a830f1e569b0e31dab00152d9bed1b3.blade.php ENDPATH**/ ?>

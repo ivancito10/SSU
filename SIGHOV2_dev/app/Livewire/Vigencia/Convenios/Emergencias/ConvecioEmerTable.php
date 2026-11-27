@@ -1,0 +1,269 @@
+<?php
+
+namespace App\Livewire\Vigencia\Convenios\Emergencias;
+
+use App\Models\Vigencia\Convenio;
+use Illuminate\Support\Carbon;
+use Illuminate\Database\Eloquent\Builder;
+use PowerComponents\LivewirePowerGrid\Button;
+use PowerComponents\LivewirePowerGrid\Column;
+use PowerComponents\LivewirePowerGrid\Exportable;
+use PowerComponents\LivewirePowerGrid\Facades\Filter;
+use PowerComponents\LivewirePowerGrid\Footer;
+use PowerComponents\LivewirePowerGrid\Header;
+use PowerComponents\LivewirePowerGrid\PowerGrid;
+use PowerComponents\LivewirePowerGrid\PowerGridFields;
+use PowerComponents\LivewirePowerGrid\PowerGridComponent;
+use PowerComponents\LivewirePowerGrid\Traits\WithExport;
+
+final class ConvecioEmerTable extends PowerGridComponent
+{
+    use WithExport;
+    public string $tableName = 'ConvenioEmerTable';
+    public string $sortField = 'convenio.id';
+    public string $sortDirection = 'desc';
+
+    public function setUp(): array
+    {
+        return [
+            Exportable::make('export')
+                ->striped()
+                ->type(Exportable::TYPE_XLS, Exportable::TYPE_CSV),
+            Header::make()->showSearchInput(),
+            Footer::make()
+                ->showPerPage()
+                ->showRecordCount(),
+        ];
+    }
+
+    public function datasource(): Builder
+    {
+        return Convenio::query()
+            ->join('administracion.persona as persona', function ($persona) {
+                $persona->on('convenio.id_persona', '=', 'persona.id');
+            })
+            ->select(
+                'convenio.*',
+                'persona.nombres as p_nombres',
+                'persona.p_apellido as p_p_apellido',
+                'persona.s_apellido as p_s_apellido',
+                'persona.ci as p_ci',
+                'persona.complemento as p_complemento',
+                'persona.matricula_seguro as p_matricula_seguro',
+            );
+    }
+
+    public function relationSearch(): array
+    {
+        return [
+            'personaConvenio' => ['nombres', 'p_apellido', 's_apellido', 'ci', 'matricula_seguro'],
+        ];
+    }
+
+    public function fields(): PowerGridFields
+    {
+        return PowerGrid::fields()
+            ->add('id')
+            ->add('id')
+            ->add('cod_convenio')
+            ->add('fecha_inicio_formatted', fn(Convenio $model) => Carbon::parse($model->fecha_inicio)->format('d/m/Y'))
+            ->add('fecha_fin_formatted', fn(Convenio $model) => Carbon::parse($model->fecha_fin)->format('d/m/Y'))
+            ->add('otras_limitaciones')
+            ->add('id_persona')
+            ->add('ci_formatted', function ($carnet) {
+                if ($carnet->p_complemento == null) {
+                    return $carnet->p_ci;
+                } else {
+                    return $carnet->p_ci . ' - ' . $carnet->p_complemento;
+                }
+            })
+            ->add('persona_nombre_completo', function ($nombreCompleto) {
+                if ($nombreCompleto->personaConvenio->p_apellido == null) {
+                    return $nombreCompleto->personaConvenio->s_apellido . ' ' . $nombreCompleto->personaConvenio->nombres;
+                } elseif ($nombreCompleto->personaConvenio->s_apellido == null) {
+                    return $nombreCompleto->personaConvenio->p_apellido . ' ' . $nombreCompleto->personaConvenio->nombres;
+                } else {
+                    return $nombreCompleto->personaConvenio->p_apellido . ' ' . $nombreCompleto->personaConvenio->s_apellido . ' ' . $nombreCompleto->personaConvenio->nombres;
+                }
+            })
+            ->add('id_persona_autoriza')
+            ->add('id_tipo_convenio')
+            ->add('id_personal_ssu')
+            ->add('foto_nombre')
+            ->add('observacion')
+            ->add('medicamentos_liname')
+            ->add('medicamentos_extraliname')
+            ->add('totalidad_esp_serv')
+
+            ->add('estado', function ($dish) {
+                if ($dish->estado) {
+                    return '<span> <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="green" class="bi bi-check-circle" viewBox="0 0 16 16">
+                        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+                        <path d="m10.97 4.97-.02.022-3.473 4.425-2.093-2.094a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-1.071-1.05"/>
+                        </svg></span>';
+                } else {
+                    return '<span ><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="red" class="bi bi-x-circle" viewBox="0 0 16 16">
+                        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16"/>
+                        <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708"/>
+                        </svg></span>';
+                }
+            })
+            ->add('estado_validez', function ($dish) {
+                if ($dish->estado_validez == 'VIGENTE') {
+                    return '<span style="color: green ;" title="VIGENTE">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="currentColor" class="bi bi-check-square-fill" viewBox="0 0 16 16">
+                    <path d="M2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zm10.03 4.97a.75.75 0 0 1 .011 1.05l-3.992 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.75.75 0 0 1 1.08-.022z"/>
+                    </svg>
+                    </span>';
+                }
+                if ($dish->estado_validez == 'NO VIGENTE') {
+                    return '<span style="color: red ;" title="NO VIGENTE">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="currentColor" class="bi bi-x-circle-fill" viewBox="0 0 16 16">
+                    <path d="M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0M5.354 4.646a.5.5 0 1 0-.708.708L7.293 8l-2.647 2.646a.5.5 0 0 0 .708.708L8 8.707l2.646 2.647a.5.5 0 0 0 .708-.708L8.707 8l2.647-2.646a.5.5 0 0 0-.708-.708L8 7.293z"/>
+                    </svg>
+                    </span>';
+                }
+
+                if ($dish->estado_validez == 'ANULADO') {
+                    return '<span style="color: red ;"  title="ANULADO">
+                <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="currentColor" class="bi bi-x-square-fill" viewBox="0 0 16 16">
+                <path d="M2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2zm3.354 4.646L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 1 1 .708-.708"/>
+                </svg>
+                    </span>';
+                }
+            })
+            ->add('id_user_created')
+            ->add('id_user_updated')
+            ->add('created_at');
+    }
+
+    public function columns(): array
+    {
+        return [
+            Column::make('#', 'id')->index()
+                ->headerAttribute('text-center ', 'font-size:15px; background-color:#2471a3  ; color:white;')
+                ->bodyAttribute('text-center'),
+
+
+            Column::make('NOMBRE COMPLETO', 'persona_nombre_completo', 'p_p_apellido')
+                ->headerAttribute('text-center ', 'font-size:15px; background-color:#2471a3  ; color:white;')
+                ->sortable()
+                ->searchable(),
+
+            Column::make('CARNET', 'ci_formatted', 'p_ci')
+                ->headerAttribute('text-center ', 'font-size:15px; background-color:#2471a3  ; color:white;')
+                ->bodyAttribute('text-center')
+                ->sortable(),
+
+            Column::make('MATRICULA', 'p_matricula_seguro')
+                ->headerAttribute('text-center ', 'font-size:15px; background-color:#2471a3  ; color:white;')
+                ->bodyAttribute('text-center')
+                ->sortable(),
+
+            Column::make('S APELLIDO', 'p_s_apellido')
+                ->headerAttribute('text-center ', 'font-size:15px; background-color:#2471a3  ; color:white;')
+
+                ->sortable()
+                ->searchable()
+                ->hidden(isHidden: true, isForceHidden: true),
+
+            Column::make('NOMBRES', 'p_nombres')
+                ->headerAttribute('text-center ', 'font-size:15px; background-color:#2471a3  ; color:white;')
+                //->bodyAttribute('text-center')
+                ->sortable()
+                ->searchable()
+                ->hidden(isHidden: true, isForceHidden: true),
+
+            Column::make('FECHA INICIO', 'fecha_inicio_formatted', 'fecha_inicio')
+                ->headerAttribute('text-center ', 'font-size:15px; background-color:#2471a3  ; color:white;')
+                ->bodyAttribute('text-center')
+                ->sortable(),
+
+            Column::make('FECHA FIN', 'fecha_fin_formatted', 'fecha_fin')
+                ->headerAttribute('text-center ', 'font-size:15px; background-color:#2471a3  ; color:white;')
+                ->bodyAttribute('text-center')
+                ->sortable(),
+
+            Column::make('ESTADO', 'estado_validez')
+                ->headerAttribute('text-center ', 'font-size:15px; background-color:#2471a3  ; color:white;')
+                ->bodyAttribute('text-center')
+                ->sortable()
+                ->searchable(),
+
+
+            Column::action('OPCIONES')
+                ->headerAttribute('text-center ', 'font-size:15px; background-color:#2471a3  ; color:white;')
+                ->bodyAttribute('text-center')
+
+        ];
+    }
+
+    public function filters(): array
+    {
+        return [];
+    }
+
+    #[\Livewire\Attributes\On('edit')]
+    public function edit($rowId): void
+    {
+        $this->js('alert(' . $rowId . ')');
+    }
+
+    public function actions(Convenio $row): array
+    {
+        $buttons = [];
+        $buttons[] = Button::add('ver')
+            ->slot('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-eye-fill" viewBox="0 0 16 16">
+                <path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0"/>
+                <path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8m8 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7"/>
+                </svg>')
+            ->class('btn btn-blue')
+            ->tooltip('VER CONVENIO')
+            ->dispatchTo('vigencia.convenios.emergencias.convenio-emer-main', 'verConvenioEmer', ['data' => $row->id])
+            ->can(allowed: auth()->user()->can('ver.convenios_emergencias'));
+
+        $buttons[] = Button::add('pdf')
+            ->slot('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-filetype-pdf" viewBox="0 0 16 16">
+              <path fill-rule="evenodd" d="M14 4.5V14a2 2 0 0 1-2 2h-1v-1h1a1 1 0 0 0 1-1V4.5h-2A1.5 1.5 0 0 1 9.5 3V1H4a1 1 0 0 0-1 1v9H2V2a2 2 0 0 1 2-2h5.5zM1.6 11.85H0v3.999h.791v-1.342h.803q.43 0 .732-.173.305-.175.463-.474a1.4 1.4 0 0 0 .161-.677q0-.375-.158-.677a1.2 1.2 0 0 0-.46-.477q-.3-.18-.732-.179m.545 1.333a.8.8 0 0 1-.085.38.57.57 0 0 1-.238.241.8.8 0 0 1-.375.082H.788V12.48h.66q.327 0 .512.181.185.183.185.522m1.217-1.333v3.999h1.46q.602 0 .998-.237a1.45 1.45 0 0 0 .595-.689q.196-.45.196-1.084 0-.63-.196-1.075a1.43 1.43 0 0 0-.589-.68q-.396-.234-1.005-.234zm.791.645h.563q.371 0 .609.152a.9.9 0 0 1 .354.454q.118.302.118.753a2.3 2.3 0 0 1-.068.592 1.1 1.1 0 0 1-.196.422.8.8 0 0 1-.334.252 1.3 1.3 0 0 1-.483.082h-.563zm3.743 1.763v1.591h-.79V11.85h2.548v.653H7.896v1.117h1.606v.638z"/>
+              </svg>')
+            ->class('btn btn-blue')
+            ->tooltip('VER PDF')
+            ->dispatchTo('vigencia.convenios.emergencias.convenio-emer-main', 'convenioEmergenciaPdf', ['data' => $row->id])
+            ->can(allowed: auth()->user()->can('pdf.convenios_emergencias'));
+
+        if ($row->estado_validez === 'VIGENTE' && $row->estado === true) {
+            $buttons[] = Button::add('anular')
+                ->slot('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-exclamation-diamond" viewBox="0 0 16 16">
+                            <path d="M6.95.435c.58-.58 1.52-.58 2.1 0l6.515 6.516c.58.58.58 1.519 0 2.098L9.05 15.565c-.58.58-1.519.58-2.098 0L.435 9.05a1.48 1.48 0 0 1 0-2.098zm1.4.7a.495.495 0 0 0-.7 0L1.134 7.65a.495.495 0 0 0 0 .7l6.516 6.516a.495.495 0 0 0 .7 0l6.516-6.516a.495.495 0 0 0 0-.7L8.35 1.134z"/>
+                            <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0M7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0z"/>
+                            </svg>')
+                ->class('btn btn-red')
+                ->tooltip('ANULAR CONVENIO DE EMERGENCIA')
+                ->dispatchTo('vigencia.convenios.emergencias.convenio-emer-main', 'anularConvenioEmer', ['data' => $row->id])
+                ->can(allowed: auth()->user()->can('anular.convenios_emergencias'));
+        }
+        if ($row->estado_validez === 'NO VIGENTE' && $row->estado === true) {
+            $buttons[] = Button::add('anular')
+                ->slot('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-exclamation-diamond" viewBox="0 0 16 16">
+                            <path d="M6.95.435c.58-.58 1.52-.58 2.1 0l6.515 6.516c.58.58.58 1.519 0 2.098L9.05 15.565c-.58.58-1.519.58-2.098 0L.435 9.05a1.48 1.48 0 0 1 0-2.098zm1.4.7a.495.495 0 0 0-.7 0L1.134 7.65a.495.495 0 0 0 0 .7l6.516 6.516a.495.495 0 0 0 .7 0l6.516-6.516a.495.495 0 0 0 0-.7L8.35 1.134z"/>
+                            <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0M7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0z"/>
+                            </svg>')
+                ->class('btn btn-red')
+                ->tooltip('ANULAR CONVENIO DE EMERGENCIA')
+                ->dispatchTo('vigencia.convenios.emergencias.convenio-emer-main', 'anularConvenioEmer', ['data' => $row->id])
+                ->can(allowed: auth()->user()->can('anular.convenios_emergencias'));
+        }
+        return $buttons;
+    }
+    /*
+    public function actionRules($row): array
+    {
+       return [
+            // Hide button edit for ID 1
+            Rule::button('edit')
+                ->when(fn($row) => $row->id === 1)
+                ->hide(),
+        ];
+    }
+    */
+}
